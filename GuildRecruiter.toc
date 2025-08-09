@@ -1,7 +1,7 @@
 ## Interface: 100207
 ## Title: GuildRecruiter
 ## Notes: Guild recruiting assistant (prospects, blacklist, rotation messages)
-## Author: You
+## Author: Distributed Cloud of Sentient Macros
 ## Version: 0.1.0
 ## SavedVariables: GuildRecruiterDB
 
@@ -39,11 +39,7 @@ Commands.lua
 # Options
 Options.lua
 
-# Collections examples (optional - remove in production)
-Collections/Examples.lua
-
-# Framework showcase
-Showcase.lua
+# (Examples & showcase removed for production)
 
 # Init MUST be last - after all other files have loaded
 Init.lua

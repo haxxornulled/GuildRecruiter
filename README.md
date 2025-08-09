@@ -49,4 +49,4 @@ Creates `release/GuildRecruiter-vX.Y.Z.zip` based on version in `GuildRecruiter.
 - Trigger Config changes and observe `ConfigChanged` EventBus publications
 
 ## License
-MIT
+BSD 3-Clause. Collective anonymous authorship ("Distributed Cloud of Sentient Macros"). See LICENSE.
