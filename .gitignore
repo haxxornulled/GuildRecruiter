@@ -1,0 +1,15 @@
+# WoW Addon Development
+*.bak
+*.tmp
+*.orig
+*.log
+*.zip
+# IDE / Editors
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+# Windows metadata
+desktop.ini
+# Release artifacts
+/release/

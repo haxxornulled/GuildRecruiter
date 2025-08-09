@@ -1,0 +1,49 @@
+## Interface: 100207
+## Title: GuildRecruiter
+## Notes: Guild recruiting assistant (prospects, blacklist, rotation messages)
+## Author: You
+## Version: 0.1.0
+## SavedVariables: GuildRecruiterDB
+
+# Core bootstrap
+Core.lua
+
+# Collections (LINQ-style for Lua) - Load early so other services can use them
+Collections/List.lua
+Collections/Dictionary.lua
+Collections/Extensions.lua
+
+# Infrastructure services
+Config.lua
+Logger.lua
+EventBus.lua
+Scheduler.lua
+GuildRecruiter.lua
+InviteService.lua
+Helpers/ChatChannelHelper.lua
+Helpers/RoleHelper.lua
+ProspectsManager.lua
+
+# UI (load foundational style/theme + side panel before main frame)
+UI/Style.lua
+UI/Theme_Dragonfly.lua
+UI/UI_SidePanel.lua
+UI/UI_MainFrame.lua
+UI/UI_Prospects.lua
+UI/UI.Blacklist.lua
+UI/UI_Settings.lua
+
+# Commands
+Commands.lua
+
+# Options
+Options.lua
+
+# Collections examples (optional - remove in production)
+Collections/Examples.lua
+
+# Framework showcase
+Showcase.lua
+
+# Init MUST be last - after all other files have loaded
+Init.lua
