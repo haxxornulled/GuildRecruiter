@@ -6,8 +6,9 @@ local function CreateEventBus()
   local function newBus()
     local self = {}
     local seq = 0
-    local handlers = {}          -- [event] = { { token=..., fn=..., ns=... }, ... }
-    local tokenIndex = {}        -- [token] = { event=..., idx=... }
+  local handlers = {}          -- [event] = { { token=..., fn=..., ns=... }, ... }
+  local tokenIndex = {}        -- [token] = { event=..., idx=... }
+  local stats = { publishes = 0, errors = 0 }
     local wowFrame = CreateFrame("Frame")
 
     local function logErr(msg)
@@ -20,16 +21,19 @@ local function CreateEventBus()
     end
 
     function self:Publish(ev, ...)
+      stats.publishes = stats.publishes + 1
       local list = handlers[ev]
       if not list or #list == 0 then return end
-      -- copy to avoid re-entrancy mutation issues
       local snapshot = {}
       for i=1,#list do snapshot[i] = list[i] end
       for i=1,#snapshot do
         local h = snapshot[i]
         if h and h.fn then
           local ok, err = pcall(h.fn, ev, ...)
-          if not ok then logErr("Handler error for "..ev..": "..tostring(err)) end
+          if not ok then
+            stats.errors = stats.errors + 1
+            logErr("Handler error for "..ev..": "..tostring(err))
+          end
         end
       end
     end
@@ -56,6 +60,26 @@ local function CreateEventBus()
       for ev, list in pairs(handlers) do
         for i=#list,1,-1 do if list[i].ns == ns then table.remove(list, i) end end
       end
+    end
+
+    function self:ListEvents()
+      local evs = {}
+      for ev,_ in pairs(handlers) do evs[#evs+1] = ev end
+      table.sort(evs)
+      return evs
+    end
+
+    function self:HandlerCount(ev)
+      local list = handlers[ev]; return list and #list or 0
+    end
+
+    function self:Diagnostics()
+      local diag = { publishes = stats.publishes, errors = stats.errors, events = {} }
+      for ev,list in pairs(handlers) do
+        diag.events[#diag.events+1] = { event=ev, handlers=#list }
+      end
+      table.sort(diag.events, function(a,b) return a.event < b.event end)
+      return diag
     end
 
     function self:RegisterWoWEvent(ev)

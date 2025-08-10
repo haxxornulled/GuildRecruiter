@@ -17,6 +17,7 @@ Collections/AccordionSections.lua
 
 # Infrastructure services
 Config.lua
+Services/SavedVarsService.lua
 Logger.lua
 EventBus.lua
 Scheduler.lua
@@ -31,11 +32,15 @@ Tools/CategoryManager.lua
 Tools/Tokens.lua
 Tools/UIHelpers.lua
 Tools/ButtonLib.lua
+Tools/JSON.lua
 
 # UI (load foundational style/theme + side panel before main frame)
 UI/Style.lua
 UI/Theme_Dragonfly.lua
 UI/UI_SidePanel.lua
+UI/UI_CategoryDecorators.lua
+UI/UI_Summary.lua
+UI/UI_Debug.lua
 UI/UI_MainFrame.lua
 UI/UI_Prospects.lua
 UI/UI.Blacklist.lua

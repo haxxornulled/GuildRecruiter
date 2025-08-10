@@ -90,21 +90,28 @@ local function handleSlash(msg)
             println("Usage: /gr devmode [on|off|toggle]")
             return
         end
-        -- Rebuild sidebar if UI loaded to reflect debug tab visibility
-        if Addon.UI and Addon.UI.Main and Addon.UI.Main.RefreshCategories then
-            pcall(Addon.UI.Main.RefreshCategories, Addon.UI.Main)
-            local toast = Addon.UI.Main.ShowToast and Addon.UI.Main
-            if toast then
-                local state = cfg:Get("devMode", false) and "Dev Mode ENABLED" or "Dev Mode DISABLED"
-                pcall(Addon.UI.Main.ShowToast, Addon.UI.Main, state)
-            end
-        elseif Addon.UI and Addon.UI.Show then
-            -- fallback: reopen UI to refresh visibility
-            local mf = _G["GuildRecruiterFrame"]
-            if mf and mf.IsShown and mf:IsShown() then
-                mf:Hide(); C_Timer.After(0, function() if mf.Show then mf:Show() end end)
-            end
+        -- Properly refresh categories using the main UI module (provided as UI.Main or Addon.UI)
+        local ui = (Addon.UI and Addon.UI.RefreshCategories and Addon.UI) or (Addon.require and Addon.require("UI.Main"))
+        if ui and ui.RefreshCategories then pcall(ui.RefreshCategories, ui) end
+        -- If disabling dev mode while debug was selected, switch to summary tab
+        if ui and ui.SelectCategoryByKey and not cfg:Get("devMode", false) then
+            ui:SelectCategoryByKey("summary")
         end
+        -- Toast feedback
+        if ui and ui.ShowToast then
+            local state = cfg:Get("devMode", false) and "Dev Mode ENABLED" or "Dev Mode DISABLED"
+            pcall(ui.ShowToast, ui, state)
+        end
+        return
+    elseif msg == "help" then
+        println("Guild Recruiter commands:")
+        println(" /gr ui|toggle        - Open the main UI")
+        println(" /gr settings          - Open settings panel")
+        println(" /gr messages add N    - Add rotation message N (creates new section)")
+        println(" /gr messages remove N - Remove rotation message N ( >3 core protected)")
+        println(" /gr messages list     - List existing rotation message indices")
+        println(" /gr devmode [on|off|toggle] - Show/hide Debug tab")
+        println(" /gr diag              - Diagnostics summary")
         return
     elseif msg == "diag" or msg == "diagnostics" then
         local function stateline(label, value)
@@ -123,16 +130,14 @@ local function handleSlash(msg)
         }
         for _, k in ipairs(keys) do
             local ok, inst = pcall(Core.Resolve, k)
-            if ok and inst then
-                local typ = type(inst)
-                local extra = ""
-                if typ == "table" then
-                    if inst.Start and inst.Stop then extra = " service" end
-                end
-                println(string.format(" - %s: ok (%s%s)", k, typ, extra))
-            else
-                println(string.format(" - %s: missing", k))
-            end
+            local status = ok and inst and "ok" or "missing"
+            local viaRequire, rInst = pcall(Addon.require, k)
+            local facade = (Addon[k] and type(Addon[k])=="table") and "facade" or ""
+            local note = {}
+            if status == "ok" and type(inst)=="table" and inst.Start and inst.Stop then note[#note+1] = "service" end
+            if viaRequire and rInst then note[#note+1] = "require-ok" end
+            if facade ~= "" then note[#note+1] = facade end
+            println(string.format(" - %s: %s%s", k, status, (#note>0 and (" ("..table.concat(note, ",")..")") or "")))
         end
         -- Simple health events/state
         if Addon.EventBus and Addon.EventBus.Publish then
@@ -140,6 +145,9 @@ local function handleSlash(msg)
         else
             println("EventBus: missing facade")
         end
+        -- SavedVarsService check
+        local svOk, sv = pcall(Addon.require, "SavedVarsService")
+        println("SavedVarsService: "..(svOk and sv and "ok" or "missing"))
         if Addon.UI and Addon.UI.Show then println("UI: main module loaded") end
         println("Diagnostics complete.")
         return
@@ -155,7 +163,7 @@ local function handleSlash(msg)
         end
     end
 
-    println("Unknown command. Try /gr settings or /gr ui.")
+    println("Unknown command. Try /gr help.")
 end
 
 -- Slash aliases

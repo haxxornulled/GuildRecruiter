@@ -1,0 +1,1 @@
+-- (Deprecated) Intentionally left blank; help logic centralized in Tools/UIHelpers.lua

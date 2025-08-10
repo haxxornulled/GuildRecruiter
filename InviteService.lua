@@ -101,36 +101,34 @@ local function sendToChannel(msg, info)
   end
 end
 
+-- Perform a GUILD invite (not a party invite). Tries modern and legacy APIs.
 local function doInvite(nameRealm)
-  if C_PartyInfo and C_PartyInfo.InviteUnit then
-    local ok, err = pcall(C_PartyInfo.InviteUnit, nameRealm)
-    return ok and true or false, (ok and nil or tostring(err))
+  if not nameRealm or nameRealm == "" then return false, "no-name" end
+  if not IsInGuild or not IsInGuild() then return false, "not-in-guild" end
+  -- nameRealm may be Name-Realm; some APIs prefer name only
+  local nameOnly = nameRealm:match("^([^%-]+)") or nameRealm
+
+  -- Preferred: C_GuildInfo.Invite (retail)
+  if C_GuildInfo and C_GuildInfo.Invite then
+    local ok = pcall(C_GuildInfo.Invite, nameRealm)
+    if ok then return true end
+    -- Retry with name only if first failed and there was a realm part
+    if nameOnly ~= nameRealm then
+      ok = pcall(C_GuildInfo.Invite, nameOnly)
+      if ok then return true end
+    end
   end
-  return false, "no-invite-api"
+  return false, "guild-invite-failed"
 end
 
 -- Factory function for DI container (TRUE lazy resolution)
 local function CreateInviteService()
-    -- Lazy dependency accessors - resolved only when actually used
-    local function getLog()
-      return Addon.require("Logger"):ForContext("Subsystem","InviteService")
-    end
-    
-    local function getBus()
-      return Addon.require("EventBus")
-    end
-    
-    local function getScheduler()
-      return Addon.require("Scheduler")
-    end
-    
-    local function getConfig()
-      return Addon.require("Config")
-    end
-    
-    local function getRecruiter()
-      return Addon.require("Recruiter")
-    end
+  -- Unified lazy accessors via DI container helpers
+  local function getLog() return Addon.Get("Logger"):ForContext("Subsystem","InviteService") end
+  local function getBus() return Addon.Get("EventBus") end
+  local function getScheduler() return Addon.Get("Scheduler") end
+  local function getConfig() return Addon.Get("Config") end
+  local function getRecruiter() return Addon.Get("Recruiter") end
 
   local self = {}
   local running = false
@@ -139,6 +137,95 @@ local function CreateInviteService()
   local cooldownMin = 10  -- anti-spam safety for broadcasts
 
   local cycleIndex = 1
+  -- Separate rotation index for direct whisper invites so broadcasts keep their own order
+  local inviteCycleIndex = 1
+  -- History of sent per-prospect whispers (guid -> { lastMessage=string, count=int, lastAt=epoch })
+  local inviteHistory = {}
+  -- Track recent guild invites to correlate decline messages
+  local recentInvites = {} -- key: lower(name) -> { guid=guid, at=epoch }
+  local declinePatterns = nil
+
+  local function sanitize(msg)
+    if not msg then return "" end
+    -- Remove color codes and hyperlinks for reliable pattern matching
+    msg = msg:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    msg = msg:gsub("|H.-|h", ""):gsub("|h", "")
+    return msg
+  end
+
+  local function buildDeclinePatterns()
+    if declinePatterns then return declinePatterns end
+    local List = Addon.Get("Collections.List") or Addon.List
+    local arr = {
+      "^([%a%d%-]+) has declined your guild invitation%.$",
+      "^([%a%d%-]+) declines your guild invitation%.$",
+      "^([%a%d%-]+) declines your invitation to join the guild%.$",
+    }
+    declinePatterns = List and List.new(arr) or arr
+    return declinePatterns
+  end
+
+  local function noteInvite(guid, target)
+    local nameOnly = target:match("^([^%-]+)") or target
+    recentInvites[nameOnly:lower()] = { guid=guid, at=now_s() }
+  end
+
+  local function cleanupInvites()
+    local cutoff = now_s() - 900 -- 15 min
+    for k,info in pairs(recentInvites) do if (info.at or 0) < cutoff then recentInvites[k]=nil end end
+  end
+
+  local function handleSystemMessage(msg)
+    if type(msg) ~= "string" or msg == "" then return end
+    if not msg:lower():find("declin") then return end -- quick filter
+    local raw = msg
+    msg = sanitize(msg)
+    local pats = buildDeclinePatterns()
+    local who
+    if pats.ForEach then
+      pats:ForEach(function(pat)
+        if not who then who = msg:match(pat) end
+      end)
+    else
+      for _,pat in ipairs(pats) do if not who then who = msg:match(pat) end end
+    end
+    -- Fallback heuristic: first token before space if message contains 'declined your guild invitation'
+    if not who and msg:lower():find("declin") and msg:lower():find("guild invitation") then
+      who = msg:match("^([^%s]+)")
+    end
+    if not who then return end
+    local nameOnly = who:match("^([^%-]+)") or who
+    local rec = recentInvites[nameOnly:lower()]
+    local guid = rec and rec.guid
+    -- Fallback: attempt to find prospect by name if guid missing (invite by name)
+    if not guid then
+      local recruiter = getRecruiter()
+      if recruiter and recruiter.GetAllGuids and recruiter.GetProspect then
+        for _,pguid in ipairs(recruiter:GetAllGuids() or {}) do
+          local p = recruiter:GetProspect(pguid)
+          if p and p.name and p.name:lower() == nameOnly:lower() then guid = pguid break end
+        end
+      end
+    end
+    if guid then
+      cleanupInvites()
+      local recruiter = getRecruiter()
+      local cfg = getConfig()
+      local autoBL = true
+      pcall(function() autoBL = cfg:Get("autoBlacklistDeclines", true) end)
+      if recruiter and recruiter.Blacklist and autoBL then
+        recruiter:Blacklist(guid, "declined")
+        getBus():Publish("InviteService.InviteDeclined", guid, who)
+        getLog():Info("Guild invite declined by {Player}; auto-blacklisted guid={GUID}", { Player = who, GUID = guid })
+      else
+        getBus():Publish("InviteService.InviteDeclined", guid, who)
+        getLog():Info("Guild invite declined by {Player}; noted (auto-blacklist disabled)", { Player = who, GUID = guid })
+      end
+      recentInvites[nameOnly:lower()] = nil
+    else
+      getLog():Debug("Decline detected but no guid match for {Player} [Msg={Msg}]", { Player = who, Msg = raw })
+    end
+  end
 
   local function randInterval()
     local base = tonumber(getConfig():Get("broadcastInterval", 300)) or 300
@@ -166,6 +253,19 @@ local function CreateInviteService()
       local txt = getConfig():Get(keys[idx], "")
       if type(txt) == "string" and txt ~= "" then
         cycleIndex = (idx % #keys) + 1
+        return txt
+      end
+    end
+    return nil
+  end
+
+  local function nextInviteMessage()
+    local keys = { "customMessage1", "customMessage2", "customMessage3" }
+    for n = 0, #keys-1 do
+      local idx = ((inviteCycleIndex - 1 + n) % #keys) + 1
+      local txt = getConfig():Get(keys[idx], "")
+      if type(txt) == "string" and txt ~= "" then
+        inviteCycleIndex = (idx % #keys) + 1
         return txt
       end
     end
@@ -226,6 +326,20 @@ local function CreateInviteService()
 
     local msg = renderTemplate(tpl, pickBag(nil))
     local info = chooseChannel(nil, getConfig())
+    if info and info.kind == "SAY" then
+      local cfg = getConfig()
+      local needConfirm = true
+      pcall(function() needConfirm = cfg:Get("allowSayFallbackConfirm", false) end)
+      if needConfirm then
+        -- Require user to explicitly re-enable or confirm; publish skipped event.
+        getBus():Publish("InviteService.BroadcastSkipped", "say-confirm")
+        getLog():Warn("Broadcast blocked: SAY fallback requires confirmation (set allowSayFallbackConfirm=false to allow)")
+        if DEFAULT_CHAT_FRAME then
+          DEFAULT_CHAT_FRAME:AddMessage("|cffffaa00[GR]|r Broadcast skipped: SAY fallback blocked. Toggle 'Require confirm for SAY fallback' in settings or change channel.")
+        end
+        return false, "say-confirm"
+      end
+    end
     local ok, err = sendToChannel(msg, info)
     if ok then
       lastSentAt = now()
@@ -250,10 +364,16 @@ local function CreateInviteService()
     getBus():Publish("InviteService.InviteAttempt", { guid = guid, target = target })
 
     if opts.whisper ~= false then
-      local tpl = getConfig():Get("whisperTemplate", getConfig():Get("customMessage1", "Hey {Player}, {Guild} is recruiting!"))
-      local text = renderTemplate(tpl, pickBag(p))
-      pcall(SendChatMessage, text, "WHISPER", nil, target)
-      getBus():Publish("InviteService.WhisperSent", { guid = guid, target = target, message = text })
+      local tpl
+      if getConfig():Get("inviteCycleEnabled", true) then
+        tpl = nextInviteMessage()
+      end
+      tpl = tpl or getConfig():Get("whisperTemplate", getConfig():Get("customMessage1", "Hey {Player}, {Guild} is recruiting!"))
+  local text = renderTemplate(tpl, pickBag(p))
+  pcall(SendChatMessage, text, "WHISPER", nil, target)
+  inviteHistory[guid] = inviteHistory[guid] or { count = 0 }
+  local h = inviteHistory[guid]; h.lastMessage = text; h.count = h.count + 1; h.lastAt = now_s()
+  getBus():Publish("InviteService.WhisperSent", { guid = guid, target = target, message = text })
     end
 
     local ok, err = doInvite(target)
@@ -262,6 +382,7 @@ local function CreateInviteService()
       getBus():Publish("InviteService.Invited", guid, target)
       getBus():Publish("Recruiter.ProspectUpdated", guid, p)
       getLog():Info("Invited {Target}", { Target = target })
+      noteInvite(guid, target)
       return true
     else
       getBus():Publish("InviteService.InviteFailed", guid, target, err or "invite-error")
@@ -269,6 +390,11 @@ local function CreateInviteService()
       return false, err
     end
   end
+
+  -- === History accessors ===
+  function self:GetInviteHistory(guid) return inviteHistory[guid] end
+  function self:GetLastInviteMessage(guid) local h = inviteHistory[guid]; return h and h.lastMessage or nil end
+  function self:GetInviteCount(guid) local h = inviteHistory[guid]; return h and h.count or 0 end
 
   -- Invite arbitrary player (name, realm?)
   function self:InviteName(name, realm, opts)
@@ -288,6 +414,7 @@ local function CreateInviteService()
     if ok then
       getBus():Publish("InviteService.Invited", nil, target)
       getLog():Info("Invited {Target}", { Target = target })
+      noteInvite(nil, target)
       return true
     else
       getBus():Publish("InviteService.InviteFailed", nil, target, err or "invite-error")
@@ -307,6 +434,11 @@ local function CreateInviteService()
     -- Dependency-free startup - just initialize state
     self._started = true
     getLog():Debug("InviteService ready")
+  -- Register system chat listener for decline detection
+  local bus = getBus()
+  self._tokens = self._tokens or {}
+  self._tokens[#self._tokens+1] = bus:RegisterWoWEvent("CHAT_MSG_SYSTEM").token
+  self._tokens[#self._tokens+1] = bus:Subscribe("CHAT_MSG_SYSTEM", function(_, msg) handleSystemMessage(msg) end, { namespace="InviteService" })
   end
 
   function self:Stop()
@@ -314,6 +446,11 @@ local function CreateInviteService()
     getScheduler():CancelNamespace("InviteService")
     setRunning(false)
     getLog():Debug("InviteService stopped")
+    if self._tokens then
+      for _,tok in ipairs(self._tokens) do getBus():Unsubscribe(tok) end
+      getBus():UnsubscribeNamespace("InviteService")
+      self._tokens = nil
+    end
   end
 
   return self

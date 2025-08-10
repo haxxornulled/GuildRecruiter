@@ -65,8 +65,15 @@ local function RegisterLoggerFactories()
     -- ===========================
     -- LevelSwitch (singleton)
     -- ===========================
-    Addon.provide("LevelSwitch", function()
-        local self = { min = Levels.INFO }
+        Addon.provide("LevelSwitch", function(scope)
+                local cfg
+                pcall(function() cfg = Addon.require and Addon.require("Config") end)
+                local initial = Levels.INFO
+                if cfg and cfg.Get then
+                    local lvlName = tostring(cfg:Get("logLevel", "INFO")):upper()
+                    initial = Levels[lvlName] or Levels.INFO
+                end
+                local self = { min = initial }
         function self:Get() return self.min end
         function self:Set(v)
             if type(v) == "string" then v = Levels[v] end
@@ -79,8 +86,13 @@ local function RegisterLoggerFactories()
     -- ===========================
     -- Log Sinks
     -- ===========================
-    Addon.provide("LogSink", function()
-        local self = { capacity = 500, buffer = {} }
+        Addon.provide("LogSink", function()
+                local capacity = 500
+                pcall(function()
+                    local cfg = Addon.require and Addon.require("Config")
+                    if cfg and cfg.Get then capacity = tonumber(cfg:Get("logBufferCapacity", capacity)) or capacity end
+                end)
+                local self = { capacity = capacity, buffer = {} }
         function self:Write(evt)
             local line = string.format("[%s] %-5s %-18s | %s",
                 evt.ts or LoggerSystem.nowISO(), LevelNames[evt.level] or evt.level, 
@@ -181,6 +193,31 @@ local function RegisterLoggerFactories()
         local f = scope:Resolve("LoggerFactory")
         return NewLogger(f, LoggerSystem.shallow(f.addonSource))
     end, { lifetime = "SingleInstance" })
+
+        -- React to config changes for dynamic log level & capacity
+        local function TryHookConfig()
+            local ok, bus = pcall(Addon.require, "EventBus")
+            if not ok or not bus or not bus.Subscribe then return end
+            bus:Subscribe("ConfigChanged", function(_, key, value)
+                if key == "logLevel" then
+                    local logger = Addon.require and Addon.require("Logger")
+                    local ls = Addon.require and Addon.require("LevelSwitch")
+                    if ls then ls:Set(tostring(value):upper()) end
+                    if logger and logger.Info then
+                        logger:Info("Log level changed to {Level}", { Level = tostring(value) })
+                    end
+                elseif key == "logBufferCapacity" then
+                    -- Resize buffer for first sink (memory-only). New capacity applies to future writes.
+                    local okS, sink = pcall(Addon.require, "LogSink")
+                    if okS and sink and sink.capacity then
+                        local newCap = tonumber(value) or sink.capacity
+                        sink.capacity = newCap
+                        while #sink.buffer > newCap do table.remove(sink.buffer, 1) end
+                    end
+                end
+            end, { namespace = "Logger" })
+        end
+        C_Timer.After(0.3, TryHookConfig)
 
     -- Export levels
     Addon.provide("Levels", Levels, { lifetime = "SingleInstance" })

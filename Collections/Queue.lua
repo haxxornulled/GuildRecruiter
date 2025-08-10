@@ -17,6 +17,10 @@ function Queue:Enqueue(item)
   return self
 end
 
+-- Tuning constants (adjustable)
+Queue.COMPACT_HEAD_THRESHOLD = 64
+Queue.COMPACT_RATIO_DIVISOR  = 2
+
 function Queue:Dequeue()
   if self._count == 0 then return nil end
   local item = self._data[self._head]
@@ -26,7 +30,7 @@ function Queue:Dequeue()
   -- Compact occasionally to avoid unbounded growth
   if self._count == 0 then
     self._head, self._tail = 1, 0
-  elseif self._head > 64 and (self._head > self._tail / 2) then
+  elseif self._head > Queue.COMPACT_HEAD_THRESHOLD and (self._head > self._tail / Queue.COMPACT_RATIO_DIVISOR) then
     local newData = {}
     local j = 1
     for i = self._head, self._tail do newData[j] = self._data[i]; j = j + 1 end

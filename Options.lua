@@ -79,11 +79,7 @@ local function CreateOptions()
       end)
       row(32)
 
-      local chanHelper = nil
-      local okCH, maybeCore = pcall(Addon.require, "Core")
-      if okCH and maybeCore and maybeCore.TryResolve then
-        chanHelper = maybeCore.TryResolve("ChatChannelHelper")
-      end
+  local chanHelper = Addon.Get("ChatChannelHelper")
       local label = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
       label:SetPoint("TOPLEFT", 20, y); label:SetText("Broadcast channel")
       local dd = CreateDropdown(frame); dd:SetPoint("TOPLEFT", 180, y - 6)
@@ -180,6 +176,63 @@ local function CreateOptions()
       msgRow("customMessage1", "Message 1")
       msgRow("customMessage2", "Message 2")
       msgRow("customMessage3", "Message 3")
+
+      -- Auto blacklist declines toggle
+      local abd = CreateCheckbox(frame, "Auto-blacklist declined invites", "If enabled, declined guild invites add the player to blacklist")
+      abd:SetPoint("TOPLEFT", 24, y)
+      abd:SetChecked(cfg:Get("autoBlacklistDeclines", true))
+      abd:SetScript("OnClick", function(b)
+        local v = b:GetChecked() and true or false
+        cfg:Set("autoBlacklistDeclines", v)
+        if bus and bus.Publish then bus:Publish("ConfigChanged","autoBlacklistDeclines", v) end
+      end)
+      y = y - 32
+
+      local sayc = CreateCheckbox(frame, "Require confirm for SAY fallback", "Prevents accidental public spam when no channel available")
+      sayc:SetPoint("TOPLEFT", 24, y)
+      sayc:SetChecked(cfg:Get("allowSayFallbackConfirm", false))
+      sayc:SetScript("OnClick", function(b)
+        local v = b:GetChecked() and true or false
+        cfg:Set("allowSayFallbackConfirm", v)
+        if bus and bus.Publish then bus:Publish("ConfigChanged","allowSayFallbackConfirm", v) end
+      end)
+      y = y - 32
+
+      -- Log level dropdown
+      local llLabel = frame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+      llLabel:SetPoint("TOPLEFT", 20, y); llLabel:SetText("Minimum log level")
+      local llDD = CreateDropdown(frame); llDD:SetPoint("TOPLEFT", 180, y - 6)
+      local levels = { "TRACE","DEBUG","INFO","WARN","ERROR","FATAL" }
+      local currLL = tostring(cfg:Get("logLevel", "INFO")):upper()
+      UIDropDownMenu_SetWidth(llDD, 140)
+      UIDropDownMenu_Initialize(llDD, function(_, level)
+        for i,name in ipairs(levels) do
+          local info = UIDropDownMenu_CreateInfo()
+          info.text = name
+          info.func = function()
+            currLL = name
+            UIDropDownMenu_SetSelectedID(llDD, i)
+            cfg:Set("logLevel", name)
+            if bus and bus.Publish then bus:Publish("ConfigChanged","logLevel", name) end
+          end
+          info.checked = (currLL == name)
+          UIDropDownMenu_AddButton(info, level)
+        end
+      end)
+      for i,name in ipairs(levels) do if name == currLL then UIDropDownMenu_SetSelectedID(llDD, i) end end
+      y = y - 40
+
+      local lbCap, lbCapName = CreateSlider(frame, "Log buffer capacity", 100, 2000, 50, 260)
+      lbCap:SetPoint("TOPLEFT", 20, y)
+      lbCap:SetValue(tonumber(cfg:Get("logBufferCapacity", 500)) or 500)
+      _G[lbCapName.."Text"]:SetText("Log buffer capacity: "..(cfg:Get("logBufferCapacity", 500)))
+      lbCap:SetScript("OnValueChanged", function(_, v)
+        v = math.max(100, math.min(2000, math.floor(v+0.5)))
+        cfg:Set("logBufferCapacity", v)
+        _G[lbCapName.."Text"]:SetText("Log buffer capacity: "..v)
+        if bus and bus.Publish then bus:Publish("ConfigChanged","logBufferCapacity", v) end
+      end)
+      y = y - 56
 
       local tip = frame:CreateFontString(nil, "ARTWORK", "GameFontDisable")
       tip:SetPoint("BOTTOMLEFT", 20, 12)

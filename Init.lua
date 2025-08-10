@@ -43,6 +43,7 @@ local function RegisterFactories()
   local available = {}
   local missing = {}
   local registrations = {
+  { name = "SavedVarsService", func = Addon._RegisterSavedVarsService },
     { name = "Logger", func = Addon._RegisterLogger },
     { name = "EventBus", func = Addon._RegisterEventBus },
     { name = "Scheduler", func = Addon._RegisterScheduler },
@@ -98,7 +99,7 @@ local function WarmContainer()
   
   -- Resolve in dependency order (only try services we know were registered)
   local services = {
-    "Logger", "EventBus", "Scheduler", "Config", 
+  "SavedVarsService", "Logger", "EventBus", "Scheduler", "Config", 
     "Recruiter", "InviteService", "Options"
   }
   

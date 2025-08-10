@@ -28,7 +28,26 @@ local DEFAULTS = {
     -- UI invite feedback durations (seconds)
     inviteClickCooldown = 3,
     invitePillDuration  = 3,
+    inviteCycleEnabled  = true,  -- rotate through customMessage1-3 for per-prospect invites
+    toastOnDecline      = true,  -- show chat toast when a guild invite is declined & auto-blacklisted
+    autoBlacklistDeclines = true, -- if false, declines are only logged (not blacklisted)
+    allowSayFallbackConfirm = false, -- require explicit user confirmation before using SAY fallback auto channel
+    logLevel            = "INFO", -- default minimum log level
+    logBufferCapacity   = 500,    -- ring buffer size for structured logs
 }
+
+-- Allowed broadcast channel specs (validated on Set)
+local VALID_CHANNEL_SPECS = {
+    AUTO=true, SAY=true, YELL=true, GUILD=true, OFFICER=true, INSTANCE_CHAT=true,
+}
+
+-- Pattern allowance for explicit numbered channels (e.g., CHANNEL:Trade)
+local function isValidChannelSpec(spec)
+    if type(spec) ~= "string" then return false end
+    if VALID_CHANNEL_SPECS[spec] then return true end
+    if spec:match("^CHANNEL:%w+") then return true end
+    return false
+end
 
 -- ===========================
 -- Utils
@@ -53,6 +72,14 @@ local function try_require(key)
     if not Core or not Core.Addon or not Core.Addon.require then return nil end
     local ok, inst = pcall(Core.Addon.require, key)
     if ok then return inst end
+    -- One-time warning per key to surface silent dependency failures
+    _G.__GR_TRY_REQ_FAILS = _G.__GR_TRY_REQ_FAILS or {}
+    if not _G.__GR_TRY_REQ_FAILS[key] then
+        _G.__GR_TRY_REQ_FAILS[key] = true
+        if DEFAULT_CHAT_FRAME then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("|cffff8800[%s][Config]|r Failed to require '%s' (lazy dependency)", ADDON_NAME or "GR", tostring(key)))
+        end
+    end
     return nil
 end
 
@@ -91,8 +118,32 @@ function Config:Get(key, fallback)
 end
 
 function Config:Set(key, value)
+    if key == nil then return end
+    local original = value
+    -- Normalization / validation per key
+    if key == "jitterPercent" then
+        value = tonumber(value) or DEFAULTS.jitterPercent
+        if value < 0 then value = 0 elseif value > 0.50 then value = 0.50 end
+    elseif key == "broadcastInterval" then
+        value = tonumber(value) or DEFAULTS.broadcastInterval
+        if value < 30 then value = 30 elseif value > 3600 then value = 3600 end
+    elseif key == "inviteClickCooldown" or key == "invitePillDuration" then
+        value = tonumber(value) or DEFAULTS[key]
+        if value < 0 then value = 0 elseif value > 120 then value = 120 end
+    elseif key == "broadcastChannel" then
+        if not isValidChannelSpec(value) then
+            value = DEFAULTS.broadcastChannel
+        end
+    elseif key == "logLevel" then
+        value = tostring(value):upper()
+        local allowed = { TRACE=true, DEBUG=true, INFO=true, WARN=true, ERROR=true, FATAL=true }
+        if not allowed[value] then value = DEFAULTS.logLevel end
+    end
     DB[key] = value
-    publish("ConfigChanged", key, value)
+    if not Config._suppressEvents then
+        publish("ConfigChanged", key, value)
+    end
+    return value ~= original
 end
 
 function Config:All()
@@ -129,10 +180,20 @@ local function InitializeConfig()
     _G[DB_NAME] = apply_defaults(_G[DB_NAME], DEFAULTS)
     DB = _G[DB_NAME]
 
+    -- Post-load normalization sweep (suppress events to avoid spam on first load)
+    Config._suppressEvents = true
+    local normalized = 0
+    for _, k in ipairs({ "broadcastChannel","broadcastInterval","jitterPercent","inviteClickCooldown","invitePillDuration","logLevel" }) do
+        local before = DB[k]
+        Config:Set(k, before)
+        if DB[k] ~= before then normalized = normalized + 1 end
+    end
+    Config._suppressEvents = nil
+
     publish("ConfigReady")
 
     local n = 0; for _ in pairs(DB) do n = n + 1 end
-    info("Config initialized (keys: {Count})", { Count = n })
+    info("Config initialized (keys: {Count}, normalized: {Norm})", { Count = n, Norm = normalized })
 end
 
 -- ===========================

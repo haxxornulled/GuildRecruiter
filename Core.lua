@@ -577,6 +577,10 @@ end
 function Core._newContainer(registry)
   local root = newScope(registry, nil, "root", nil)
   root._root = root
+  function root:DisposeRoot()
+    if self._isDisposed then return end
+    self:Dispose()
+  end
   return root
 end
 
@@ -592,6 +596,14 @@ local _global = {
   builder = nil,
   container = nil,
 }
+
+local _providedKeys = {}
+
+local function warn(msg)
+  if DEFAULT_CHAT_FRAME then
+    DEFAULT_CHAT_FRAME:AddMessage("|cffff8800[GuildRecruiter][DI]|r "..tostring(msg))
+  end
+end
 
 local function ensureGlobalBuilt()
   if not _global.container then
@@ -611,6 +623,12 @@ function Addon.provide(key, valueOrFactory, opts)
     _global.builder = Core.Builder()
   end
   local lifetime = (opts and opts.lifetime) or "SingleInstance"
+
+  -- Duplicate registration warning (non-fatal) to help catch accidental overrides
+  if key and _providedKeys[key] then
+    warn("Service key already registered: "..tostring(key).." (overriding previous registration)")
+  end
+  _providedKeys[key] = true
 
   local factory
   if is_callable(valueOrFactory) then
@@ -652,6 +670,27 @@ function Addon.Get(key)
   if ok then return inst end
 end
 
+-- Alias Try for semantic clarity when refactoring older "fallback" code
+Addon.Try = Addon.Get
+
+-- ResolveAll helper (returns empty table on error)
+function Addon.ResolveAll(key)
+  local ok, list = pcall(function()
+    ensureGlobalBuilt(); return _global.container:ResolveAll(key) or {}
+  end)
+  if ok and list then return list end
+  return {}
+end
+
+-- Strict assertion for critical services; raises descriptive error early instead of silent nil
+function Addon.Assert(key)
+  local inst = Addon.Get(key)
+  if not inst then
+    error("[GuildRecruiter][Assert] Missing required service: "..tostring(key))
+  end
+  return inst
+end
+
 -----------------------------------------------------------------------
 -- Public API
 -----------------------------------------------------------------------
@@ -677,6 +716,12 @@ ns.Core = Core
 ns.provide = Addon.provide
 ns.require = Addon.require
 ns.Get = Addon.Get
+-- Public dispose helper (idempotent)
+function ns.DisposeContainer()
+  if _global and _global.container and _global.container.DisposeRoot then
+    _global.container:DisposeRoot()
+  end
+end
 
 -- Version tag for safety
 Core.__gr_version = 1

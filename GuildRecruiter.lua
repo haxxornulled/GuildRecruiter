@@ -58,6 +58,36 @@ local STATUS = { New="New", Invited="Invited", Rejected="Rejected", Blacklisted=
 -- ===========================
 local function CreateRecruiter()
     migrateIfNeeded()
+    -- Rehydrate from SavedVarsService (prospects & blacklist) if available
+    if Addon.SavedVars and Addon.SavedVars.GetNamespace then
+      local svPros = Addon.SavedVars:GetNamespace("prospects")
+      if svPros and type(svPros) == "table" then
+        for guid, p in pairs(svPros) do
+          if type(p)=="table" and p.guid then
+            -- Only add if not already present in core DB
+            if not DB.prospects[guid] then
+              DB.prospects[guid] = p
+              -- ensure queue membership if new and not blacklisted
+              if not DB.blacklist[guid] then
+                DB.queue[#DB.queue+1] = guid
+              end
+            end
+          end
+        end
+      end
+      local svBL = Addon.SavedVars:GetNamespace("blacklist")
+      if svBL and type(svBL) == "table" then
+        for guid, entry in pairs(svBL) do
+          if entry == false then
+            -- explicit removed marker; ensure not in blacklist
+            DB.blacklist[guid] = nil
+          elseif type(entry) == "table" then
+            DB.blacklist[guid] = entry
+            local p = DB.prospects[guid]; if p then p.status = STATUS.Blacklisted end
+          end
+        end
+      end
+    end
     
     -- Lazy dependency accessors - resolved only when actually used
     local function getLog()
@@ -97,6 +127,15 @@ local function CreateRecruiter()
         }
         DB.prospects[guid] = p
         DB.queue[#DB.queue+1] = guid
+        -- Persist immediately
+        if Addon.SavedVars and Addon.SavedVars.Set then
+          -- Store individual prospect under namespace 'prospects', key is guid
+          p._persistedAt = t
+          p._lastUpdate = t
+          p._version = CURRENT_SCHEMA
+          p._sources = nil -- avoid duplicating sources table key naming; main sources stays
+          Addon.SavedVars:Set("prospects", guid, p)
+        end
         getLog():Debug("Queued {Name}-{Realm} ({Class}/{Level})", { Name=b.name, Realm=b.realm or GetRealmName(), Class=b.classToken, Level=b.level })
         getBus():Publish("Recruiter.ProspectQueued", guid, p)
       else
@@ -109,6 +148,10 @@ local function CreateRecruiter()
         p.className = b.className or p.className
         p.raceName = b.raceName or p.raceName
         p.raceToken = b.raceToken or p.raceToken
+        if Addon.SavedVars and Addon.SavedVars.Set then
+          p._lastUpdate = t
+          Addon.SavedVars:Set("prospects", guid, p)
+        end
         getBus():Publish("Recruiter.ProspectUpdated", guid, p)
       end
     end
@@ -133,6 +176,12 @@ local function CreateRecruiter()
       local p = DB.prospects[guid]; if p then p.status = STATUS.Blacklisted end
       getLog():Info("Blacklisted {GUID} {Reason}", { GUID=guid, Reason=reason or "" })
       getBus():Publish("Recruiter.Blacklisted", guid, reason)
+      if Addon.SavedVars and Addon.SavedVars.Set then
+        local entry = DB.blacklist[guid]
+        entry._persistedAt = entry._persistedAt or now_s()
+        entry._lastUpdate = now_s()
+        Addon.SavedVars:Set("blacklist", guid, entry)
+      end
     end
 
     -- Service implementation
@@ -143,8 +192,8 @@ local function CreateRecruiter()
       -- Dependency-free startup - just mark as started
       self._started = true
       
-      -- Deferred event registration to avoid circular dependencies
-      C_Timer.After(0.2, function()
+  -- Deferred event registration (delay reduced to 0 to minimize race window while still deferring)
+  C_Timer.After(0, function()
         if not self._started then return end
         
         local function capture(unit, src)
@@ -170,12 +219,63 @@ local function CreateRecruiter()
       -- Immediate startup log
       local count=0; for _ in pairs(DB.prospects) do count = count + 1 end
       getLog():Info("Recruiter starting. Prospects={Count} Queue={Q}", { Count=count, Q=#DB.queue })
+      -- Listen for invite declines to update prospect status (InviteService already handles blacklisting)
+      local bus = getBus()
+      if bus and bus.Subscribe then
+        self._declineTok = bus:Subscribe("InviteService.InviteDeclined", function(_, guid, who)
+          if guid and DB.prospects[guid] then
+            -- Update prospect status but DON'T remove from prospects - keep the data
+            local p = DB.prospects[guid]
+            if p then
+              local autoBL = true
+              pcall(function()
+                local cfg = Addon.require and Addon.require("Config")
+                if cfg and cfg.Get then autoBL = cfg:Get("autoBlacklistDeclines", true) end
+              end)
+              p.declinedAt = now_s()
+              p.declinedBy = who
+              if autoBL then
+                p.status = STATUS.Blacklisted
+                -- Remove from queue since they're blacklisted
+                local newQueue = {}
+                for _, qguid in ipairs(DB.queue) do if qguid ~= guid then newQueue[#newQueue+1] = qguid end end
+                DB.queue = newQueue
+              else
+                -- Keep status as-is (New/Invited). Optionally tag declined flag
+                if p.status == STATUS.New then p.status = STATUS.New end
+              end
+              if Addon.SavedVars and Addon.SavedVars.Set then
+                p._lastUpdate = now_s()
+                Addon.SavedVars:Set("prospects", guid, p)
+              end
+              getBus():Publish("Recruiter.ProspectUpdated", guid, p)
+            end
+            
+            local showToast = false
+            pcall(function()
+              local cfg = Addon.require and Addon.require("Config")
+              if cfg and cfg.Get then showToast = cfg:Get("toastOnDecline", true) end
+            end)
+            local msg
+            if p and p.status == STATUS.Blacklisted then
+              msg = (who and (who.." declined guild invite - moved to blacklist") or "Invite declined - moved to blacklist")
+            else
+              msg = (who and (who.." declined guild invite") or "Invite declined")
+            end
+            if showToast and DEFAULT_CHAT_FRAME then
+              DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[GR]|r "..msg)
+            end
+            getLog():Info("Prospect declined invite {GUID} {Player} - status updated", { GUID=guid, Player=who or "?" })
+          end
+        end, { namespace = "Recruiter" })
+      end
     end
 
     function self:Stop()
       self._started = false
       for i=1,#tokens do getBus():Unsubscribe(tokens[i]) end
       getBus():UnsubscribeNamespace("Recruiter")
+  if self._declineTok then getBus():Unsubscribe(self._declineTok); self._declineTok = nil end
       tokens = {}
     end
 
@@ -185,11 +285,14 @@ local function CreateRecruiter()
     function self:Blacklist(guid, reason) return blacklistGUID(guid, reason) end
 
     function self:GetProspect(guid) return DB.prospects[guid] end
-    function self:GetAllGuids() 
-      return List.from(DB.prospects)
-        :Select(function(_, guid) return guid end)
-        :OrderBy()
-        :ToArray()
+    -- Return sorted array of prospect GUID keys (fix: previously returned numeric indices)
+    function self:GetAllGuids()
+      local keys = {}
+      for guid, _ in pairs(DB.prospects) do
+        keys[#keys+1] = guid
+      end
+      table.sort(keys)
+      return keys
     end
     
     function self:GetQueue() 
@@ -198,6 +301,34 @@ local function CreateRecruiter()
     
     function self:IsBlacklisted(guid) return DB.blacklist[guid] or false end
     function self:ClearQueue() DB.queue = {} end
+
+    -- Prune helpers (size-based for prospects/blacklist) using List for ordering by lastSeen / timestamp
+    function self:PruneProspects(max)
+      max = tonumber(max); if not max or max < 0 then return 0 end
+      local items = {}
+      for guid,p in pairs(DB.prospects) do if p and p.lastSeen then items[#items+1] = p end end
+      table.sort(items, function(a,b) return (a.lastSeen or 0) > (b.lastSeen or 0) end)
+      local keep = {}
+      for i,p in ipairs(items) do if i <= max then keep[p.guid]=true end end
+      local removed=0
+      for guid,_ in pairs(DB.prospects) do if not keep[guid] then DB.prospects[guid]=nil; removed=removed+1 end end
+      -- Rebuild queue excluding removed
+      local newQ = {}
+      for _,guid in ipairs(DB.queue) do if DB.prospects[guid] then newQ[#newQ+1]=guid end end
+      DB.queue = newQ
+      return removed
+    end
+    function self:PruneBlacklist(max)
+      max = tonumber(max); if not max or max < 0 then return 0 end
+      local entries = {}
+      for guid,entry in pairs(DB.blacklist) do entries[#entries+1] = { guid=guid, ts = (type(entry)=="table" and entry.timestamp) or 0 } end
+      table.sort(entries, function(a,b) return (a.ts or 0) > (b.ts or 0) end)
+      local keep = {}
+      for i,e in ipairs(entries) do if i <= max then keep[e.guid]=true end end
+      local removed=0
+      for guid,_ in pairs(DB.blacklist) do if not keep[guid] then DB.blacklist[guid]=nil; removed=removed+1 end end
+      return removed
+    end
 
     -- === LINQ-powered analytics ===
     function self:GetProspectStats()
@@ -255,10 +386,50 @@ local function CreateRecruiter()
       return DB.blacklist or {}
     end
 
+    -- Return sorted array of blacklist GUID keys (mirrors GetAllGuids for prospects)
+    function self:GetBlacklistGuids()
+      local bl = DB.blacklist; if not bl then return {} end
+      local keys = {}
+      for guid, _ in pairs(bl) do keys[#keys+1] = guid end
+      table.sort(keys)
+      return keys
+    end
+
     function self:Unblacklist(guid)
       if not guid then return end
       if DB.blacklist then DB.blacklist[guid] = nil end
+      
+      -- Update prospect status back to active and clear decline info
+      local prospect = DB.prospects[guid]
+      if prospect then
+        prospect.status = "New"
+        prospect.declinedAt = nil
+        prospect.declinedBy = nil
+        prospect._lastUpdate = now_s()
+        
+        -- Re-add to queue if not already there
+        local inQueue = false
+        for _, qguid in ipairs(DB.queue) do
+          if qguid == guid then
+            inQueue = true
+            break
+          end
+        end
+        if not inQueue then
+          DB.queue[#DB.queue+1] = guid
+        end
+        
+        -- Persist changes
+        if Addon.SavedVars and Addon.SavedVars.Set then
+          Addon.SavedVars:Set("prospects", guid, prospect)
+          Addon.SavedVars:Set("blacklist", guid, false)
+        end
+        
+        getBus():Publish("Recruiter.ProspectUpdated", guid, prospect)
+      end
+      
       getBus():Publish("BlacklistUpdated")
+      getLog():Info("Unblacklisted {GUID}", { GUID=guid })
     end
 
     function self:RemoveProspect(guid)
@@ -269,6 +440,10 @@ local function CreateRecruiter()
       for _,g in ipairs(DB.queue or {}) do if g ~= guid then nq[#nq+1] = g end end
       DB.queue = nq
       getBus():Publish("ProspectsUpdated")
+      if Addon.SavedVars and Addon.SavedVars.Set then
+        -- Mark removal in SavedVars namespace so it is not rehydrated next load
+        Addon.SavedVars:Set("prospects", guid, false)
+      end
     end
 
     function self:ClearFromUI(guid)

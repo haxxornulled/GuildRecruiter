@@ -10,14 +10,25 @@ local decorators = {} -- key -> function(cat) return suffix string or nil end
 local selectedIndex = 1
 local initialized = false
 
+-- Explicit order values ensure deterministic layout (avoid alpha resort)
 local DEFAULT_CATEGORIES = {
-  { key = "summary",   label = "Summary"   },
-  { key = "prospects", label = "Prospects" },
-  { key = "blacklist", label = "Blacklist" },
-  { type = "separator" },
-  { key = "settings",  label = "Settings"  },
-  { key = "debug",     label = "Debug"     },
+  { key = "summary",   label = "Summary",   order = 10 },
+  { key = "prospects", label = "Prospects", order = 20 },
+  { key = "blacklist", label = "Blacklist", order = 30 },
+  { type = "separator",                order = 40 },
+  { key = "settings",  label = "Settings",  order = 50 },
+  { key = "debug",     label = "Debug",     order = 60 },
 }
+
+-- Dynamic visibility helper for dev/debug category
+local function DebugVisible()
+  local cfg = Addon.require and Addon.require("Config") or Addon.Config
+  if cfg and cfg.IsDev then
+    local ok, res = pcall(cfg.IsDev, cfg)
+    if ok then return not not res end
+  end
+  return false
+end
 
 -- Utility
 local function SortCategories()
@@ -70,12 +81,22 @@ function CategoryManager:Init(initial)
   else
     for _, v in ipairs(DEFAULT_CATEGORIES) do categories[#categories+1] = v end
   end
+  -- Ensure debug category respects devMode setting at all times via predicate
+  for _, c in ipairs(categories) do
+    if c.key == "debug" then
+      c.visible = DebugVisible
+      break
+    end
+  end
   initialized = true
   SortCategories(); ApplyDecorators();
 end
 
 function CategoryManager:EnsureInitialized()
-  if not initialized or #categories==0 then self:Init(categories) end
+  if not initialized or #categories==0 then self:Init(categories) else
+    -- Re-affirm debug predicate in case another module clobbered it
+    for _, c in ipairs(categories) do if c.key == "debug" then c.visible = DebugVisible break end end
+  end
 end
 
 function CategoryManager:AddCategory(def)

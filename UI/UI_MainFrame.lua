@@ -12,19 +12,52 @@ local function LOG()
 end
 
 -- Optional theme/style modules (via Addon.provide)
-local Theme        = Addon.Theme_Dragonfly or Addon.Theme
-local StyleMod     = Addon.require and Addon.require("UI.Style") or nil
-local SidePanelMod = Addon.require and Addon.require("UI.SidePanel") or (Addon.UI and Addon.UI.SidePanel)
-local Tokens       = Addon.require and Addon.require("Tools.Tokens")
-local UIHelpers    = Addon.require and Addon.require("Tools.UIHelpers")
-local List         = Addon.require and Addon.require("Collections.List")
-local Queue        = Addon.require and Addon.require("Collections.Queue")
+local Theme        = Addon.Get("Theme_Dragonfly") or Addon.Get("Theme")
+local StyleMod     = Addon.Get("UI.Style")
+local SidePanelMod = Addon.Get("UI.SidePanel") or (Addon.UI and Addon.UI.SidePanel)
+local Tokens       = Addon.Get("Tools.Tokens")
+local UIHelpers    = Addon.Get("Tools.UIHelpers")
+local List         = Addon.Get("Collections.List") or Addon.List
+local Queue        = Addon.Get("Collections.Queue")
 
 local STYLE = { PAD = 12, GAP = 8, ROW_H = 24, COLORS = { SUBTLN = {1,1,1,0.07} } }
+local TOAST = { FADE_IN = 0.18, FADE_OUT = 0.25, MAX = 5 }
+
+-- Config helper (UI-only write of layout persistence keys)
+local function CFG()
+  return (Addon.Config) or (Addon.require and Addon.require("Config"))
+end
+
+local function LoadFrameState(f)
+  local cfg = CFG(); if not (cfg and f) then return end
+  local w = tonumber(cfg:Get("ui_main_w")) or nil
+  local h = tonumber(cfg:Get("ui_main_h")) or nil
+  local x = tonumber(cfg:Get("ui_main_l")) or nil
+  local y = tonumber(cfg:Get("ui_main_t")) or nil
+  if w and h and w > 300 and h > 300 then f:SetSize(math.min(w, 1400), math.min(h, 1000)) end
+  if x and y then
+    f:ClearAllPoints()
+    -- Stored as left & top relative to UIParent bottom-left
+    f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, y)
+  end
+end
+
+local function SaveFrameState(f)
+  local cfg = CFG(); if not (cfg and f) then return end
+  if f:GetWidth() and f:GetHeight() then
+    cfg:Set("ui_main_w", math.floor(f:GetWidth()+0.5))
+    cfg:Set("ui_main_h", math.floor(f:GetHeight()+0.5))
+  end
+  local l = f:GetLeft(); local t = f:GetTop()
+  if l and t then
+    cfg:Set("ui_main_l", math.floor(l+0.5))
+    cfg:Set("ui_main_t", math.floor(t+0.5))
+  end
+end
 
 -- Category management via DI container (lazy accessor to avoid stale reference)
 local function CATM()
-  local cm = Addon.require and Addon.require("Tools.CategoryManager")
+  local cm = Addon.Get("Tools.CategoryManager")
   if cm and cm.EnsureInitialized then cm:EnsureInitialized() end
   return cm
 end
@@ -44,8 +77,54 @@ local function RebuildSidebar()
     if CM:EvaluateVisibility(c) then filtered[#filtered+1] = c end
   end
   sidebar:Rebuild(filtered)
-  local sel = CM:GetSelectedIndex() or 1
-  if filtered[sel] and filtered[sel].type ~= "separator" then sidebar:SelectIndex(sel) else sidebar:SelectIndex(1) end
+  -- Determine which filtered index corresponds to the raw selected index/key
+  local rawSel = CM:GetSelectedIndex() or 1
+  local targetKey = raw[rawSel] and raw[rawSel].key
+  local filteredIndex = nil
+  if targetKey then
+    for i, c in ipairs(filtered) do if c.key == targetKey then filteredIndex = i break end end
+  end
+  if not filteredIndex or not filtered[filteredIndex] or filtered[filteredIndex].type == "separator" then
+    -- Fallback: pick first non-separator
+    for i, c in ipairs(filtered) do if c.type ~= "separator" then filteredIndex = i break end end
+  end
+  if filteredIndex then sidebar:SelectIndex(filteredIndex) end
+end
+
+-- Subscribe to ConfigChanged devMode events (lazy registration after EventBus available)
+local function EnsureDevModeSubscription()
+  if UI._devModeSubscribed then return end
+  local Bus = Addon.EventBus or (Addon.require and Addon.require("EventBus"))
+  if not Bus or not Bus.Subscribe then return end
+  Bus:Subscribe("ConfigChanged", function(_, key, value)
+    if key == "devMode" then
+      local cfg = (Addon.require and Addon.require("Config")) or Addon.Config
+      -- Capture whether debug is currently selected BEFORE rebuild
+      local wasDebugSelected = false
+      do
+        local CM = CATM()
+        if CM and CM.GetSelectedIndex and CM.GetAll then
+          local raw = CM:GetAll() or {}
+            local sel = CM:GetSelectedIndex() or 1
+            local cat = raw[sel]
+            if cat and cat.key == "debug" then wasDebugSelected = true end
+        end
+      end
+      -- Re-evaluate sidebar categories to show/hide debug tab
+      local CM = CATM(); if CM and CM.EnsureInitialized then CM:EnsureInitialized() end
+      if UI.RefreshCategories then UI:RefreshCategories() end
+      -- If turning off and debug WAS selected, switch to summary; otherwise preserve current tab
+      if (not cfg:Get("devMode", false)) and wasDebugSelected and UI.SelectCategoryByKey then
+        UI:SelectCategoryByKey("summary")
+      end
+      if UI.ShowToast then
+        local state = (value and true) and "Dev Mode ENABLED" or "Dev Mode DISABLED"
+        -- Flush so the state change is always immediate & not hidden behind old toasts
+        pcall(UI.ShowToast, UI, state, 3, true)
+      end
+    end
+  end)
+  UI._devModeSubscribed = true
 end
 
 -- Public expose (slash command may call UI.Main:RefreshCategories())
@@ -96,90 +175,7 @@ local function SkinCollectionsBackdrop(frame)
   end
 end
 
-local function CreateSummaryPage(parent)
-  local f = CreateFrame("Frame", nil, parent); f:SetAllPoints(); f:Hide()
-  local g = f:CreateFontString(nil, "OVERLAY", "GameFontNormalHuge")
-  g:SetPoint("TOP", 0, -32)
-  local name = GetGuildInfo("player")
-  if name then g:SetText(name) else g:SetText("Not in a Guild"); g:SetTextColor(.85,.85,.85) end
-  local w = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  w:SetPoint("TOP", g, "BOTTOM", 0, -16); w:SetText("Welcome to Guild Recruiter")
-  local h = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  h:SetPoint("TOP", w, "BOTTOM", 0, -10)
-  h:SetJustifyH("CENTER")
-  h:SetText("• Prospects: live queue from target/mouseover/nameplates\n• Blacklist: do-not-invite list\n• Settings: rotation + messages")
-  function f:Render() end
-  return f
-end
-
-local function CreateDebugPage(parent)
-  local f = CreateFrame("Frame", nil, parent); f:SetAllPoints(); f:Hide()
-
-  local host = CreateFrame("Frame", "GR_DebugEdit", f, "ScrollingEditBoxTemplate")
-  host:SetPoint("TOPLEFT", 12, -12)
-  host:SetPoint("BOTTOMRIGHT", -28, 46)
-  local editBox =
-    host.EditBox or
-    (host.ScrollFrame and host.ScrollFrame.EditBox) or
-    (host.ScrollBox and host.ScrollBox.GetScrollTarget and host.ScrollBox:GetScrollTarget())
-  if editBox and editBox.GetObjectType and editBox:GetObjectType() ~= "EditBox" then editBox = nil end
-
-  local scrollBar = host.ScrollBar
-  if not editBox or not scrollBar then
-    local sf = CreateFrame("ScrollFrame", "GR_DebugScroll", f, "UIPanelScrollFrameTemplate")
-    sf:SetPoint("TOPLEFT", 12, -12); sf:SetPoint("BOTTOMRIGHT", -28, 46)
-    editBox = CreateFrame("EditBox", nil, sf); editBox:SetMultiLine(true); editBox:SetFontObject(ChatFontNormal)
-    editBox:SetAutoFocus(false); editBox:SetWidth(sf:GetWidth() - 8); editBox:SetText("")
-    sf:SetScrollChild(editBox)
-    scrollBar = _G["GR_DebugScrollScrollBar"]
-    sf:SetScript("OnSizeChanged", function(_, w) editBox:SetWidth((w or 0) - 8) end)
-  end
-
-  editBox:EnableMouse(true)
-  editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  editBox:SetScript("OnEnterPressed",  function(self) self:Insert("\n") end)
-
-  local userScrolling=false
-  local function markUser() userScrolling=true; C_Timer.After(1.0, function() userScrolling=false end) end
-  local wheelHost = host.ScrollBox or host.ScrollFrame or host or f
-  if wheelHost.EnableMouseWheel then
-    wheelHost:EnableMouseWheel(true)
-    wheelHost:SetScript("OnMouseWheel", function(_, delta)
-      if not scrollBar then return end
-      markUser(); local step = (delta>0) and -40 or 40
-      scrollBar:SetValue((scrollBar:GetValue() or 0) + step)
-    end)
-  end
-  if scrollBar and scrollBar.HookScript then scrollBar:HookScript("OnValueChanged", function() markUser() end) end
-  local function scrollToBottom()
-    if not scrollBar then return end
-    local _, max = scrollBar:GetMinMaxValues(); scrollBar:SetValue(max or 0)
-  end
-
-  function f:RenderLog()
-    local buffer = Addon.LogBuffer or {}
-    editBox:SetText(table.concat(buffer, "\n"))
-    C_Timer.After(0, function() if not userScrolling then scrollToBottom() end end)
-  end
-  if Addon.EventBus and Addon.EventBus.Subscribe then
-    Addon.EventBus:Subscribe("LogUpdated", function() if f:IsShown() then f:RenderLog() end end)
-  end
-  f:HookScript("OnShow", function() f:RenderLog() end)
-
-  local ButtonLib = Addon.require and Addon.require("Tools.ButtonLib")
-  local reloadBtn
-  if ButtonLib then
-    reloadBtn = ButtonLib:Create(f, { text="Reload UI", variant="danger", size="sm", onClick=ReloadUI })
-    reloadBtn:SetPoint("BOTTOMRIGHT", -12, 12)
-  else
-    reloadBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    reloadBtn:SetPoint("BOTTOMRIGHT", -12, 12); reloadBtn:SetSize(120, 24)
-    reloadBtn:SetText("Reload UI"); reloadBtn:SetScript("OnClick", ReloadUI)
-  end
-
-  function f:Render() f:RenderLog() end
-  return f
-end
+-- Summary & Debug pages now live in separate modules (UI.Summary, UI.Debug).
 
 local function AttachPage(key, moduleName)
   local ok, mod = pcall(Addon.require, moduleName)
@@ -198,17 +194,42 @@ local function AttachPage(key, moduleName)
   end
 end
 
+local MODULE_MAP = {
+  summary   = "UI.Summary",
+  prospects = "UI.Prospects",
+  blacklist = "UI.Blacklist",
+  settings  = "UI.Settings",
+  debug     = "UI.Debug",
+}
+
 function UI:SelectCategory(idx)
-  local categories = GetCategories()
-  if not categories[idx] then return end
-  SetSelected(idx)
+  local filtered = GetCategories()
+  local cat = filtered[idx]
+  if not cat or cat.type == "separator" then return end
+  -- Map filtered cat back to raw index for persistence
+  local CM = CATM(); local rawIdx = nil
+  if CM and CM.GetAll then
+    local raw = CM:GetAll() or {}
+    for i, c in ipairs(raw) do if c == cat then rawIdx = i break end end
+  end
+  if rawIdx then SetSelected(rawIdx) end
+  -- Visual selection among filtered buttons
   for i, btn in ipairs(catButtons) do if btn.SetSelected then btn:SetSelected(i==idx) end end
+  -- Hide all pages, then show requested
   for _, frame in pairs(contentFrames) do if frame.Hide then frame:Hide() end end
-  local cat = categories[idx]
-  if cat.type == "separator" then return end
-  local catKey = cat.key
-  local page = contentFrames[catKey]
-  if not page then print("|cffff2222[GuildRecruiter][UI]|r Missing content for tab:", tostring(catKey)); return end
+  local page = contentFrames[cat.key]
+  if not page then
+    -- Lazy attach (especially for debug page, which we only instantiate when devMode true and requested)
+    local modName = MODULE_MAP[cat.key]
+    if modName then
+      AttachPage(cat.key, modName)
+      page = contentFrames[cat.key]
+    end
+    if not page then
+      print("|cffff2222[GuildRecruiter][UI]|r Missing content for tab:", tostring(cat.key))
+      return
+    end
+  end
   if page.Show then page:Show() end
   if page.Render then pcall(page.Render, page) end
 end
@@ -218,10 +239,12 @@ function UI:Build()
   local W, H = 940, 560
   mainFrame = CreateFrame("Frame", "GuildRecruiterFrame", UIParent, "PortraitFrameTemplate")
   mainFrame:SetSize(W, H); mainFrame:SetPoint("CENTER")
+  -- Load persisted position/size before anything else adjusts
+  LoadFrameState(mainFrame)
   mainFrame:SetFrameStrata("DIALOG"); mainFrame:EnableMouse(true); mainFrame:SetMovable(true)
   mainFrame:RegisterForDrag("LeftButton")
   mainFrame:SetScript("OnDragStart", mainFrame.StartMoving)
-  mainFrame:SetScript("OnDragStop",  mainFrame.StopMovingOrSizing)
+  mainFrame:SetScript("OnDragStop",  function(self) self:StopMovingOrSizing(); SaveFrameState(self) end)
   if mainFrame.SetTitle then mainFrame:SetTitle("Guild Recruiter")
   elseif mainFrame.TitleContainer and mainFrame.TitleContainer.TitleText then
     mainFrame.TitleContainer.TitleText:SetText("Guild Recruiter")
@@ -242,15 +265,6 @@ function UI:Build()
   -- Sidebar
   local sidebarButtons = {}
   local rawCategories = (CATM() and CATM():GetAll()) or {}
-  -- Enforce dev-mode visibility predicate for debug category (toggled via Config)
-  local cfg = (Addon.require and Addon.require("Config")) or Addon.Config
-  if cfg and cfg.IsDev then
-    for _, c in ipairs(rawCategories) do
-      if c.key == "debug" then
-        c.visible = function() return cfg:IsDev() end
-      end
-    end
-  end
   -- Now filter after predicate assignment
   local categories = {}
   local CM = CATM()
@@ -260,7 +274,7 @@ function UI:Build()
     sidebar:ClearAllPoints(); sidebar:SetPoint("TOPLEFT", 6, -42); sidebar:SetPoint("BOTTOMLEFT", 6, 10)
   else
     sidebar = CreateFrame("Frame", nil, mainFrame, "InsetFrameTemplate3")
-    sidebar:SetPoint("TOPLEFT", 6, -42); sidebar:SetPoint("BOTTOMLEFT", 6, 10); sidebar:SetWidth(170)
+    sidebar:SetPoint("TOPLEFT", 6, -42); sidebar:SetPoint("BOTTOMLEFT", 6, 10); sidebar:SetWidth(140)
     local line = sidebar:CreateTexture(nil, "BACKGROUND", nil, -2)
     line:SetAllPoints(); line:SetColorTexture(0,0,0,0.15)
   end
@@ -268,20 +282,31 @@ function UI:Build()
 
   -- Content
   contentParent = CreateFrame("Frame", nil, mainFrame, "InsetFrameTemplate3")
-  contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 14, 0)
+  contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 8, 0)
   contentParent:SetPoint("BOTTOMRIGHT", -12, 10)
   SkinCollectionsBackdrop(contentParent)
   if Theme and Theme.ApplyBackground then pcall(Theme.ApplyBackground, Theme, contentParent) end
 
   -- Pages
-  contentFrames.summary = CreateSummaryPage(contentParent)
-  AttachPage("prospects", "UI.Prospects")
-  AttachPage("blacklist", "UI.Blacklist")
-  AttachPage("settings",  "UI.Settings")
-  contentFrames.debug = CreateDebugPage(contentParent)
-
-  local CM = CATM(); local sel = (CM and CM.GetSelectedIndex and CM:GetSelectedIndex()) or 1
-  UI:SelectCategory(sel)
+  AttachPage("summary",   MODULE_MAP.summary)
+  AttachPage("prospects", MODULE_MAP.prospects)
+  AttachPage("blacklist", MODULE_MAP.blacklist)
+  AttachPage("settings",  MODULE_MAP.settings)
+  -- Debug page now lazy-loaded only if devMode currently enabled
+  local cfg = (Addon.require and Addon.require("Config")) or Addon.Config
+  if cfg and cfg.Get and cfg:Get("devMode", false) then
+    AttachPage("debug", MODULE_MAP.debug)
+  end
+  local CM = CATM(); local rawSel = (CM and CM.GetSelectedIndex and CM:GetSelectedIndex()) or 1
+  -- Find filtered index matching rawSel key
+  local raw = (CM and CM.GetAll and CM:GetAll()) or {}
+  local targetKey = raw[rawSel] and raw[rawSel].key
+  local filtered = GetCategories()
+  local filteredIndex = 1
+  if targetKey then
+    for i, c in ipairs(filtered) do if c.key == targetKey then filteredIndex = i break end end
+  end
+  UI:SelectCategory(filteredIndex)
 
   -- Initial portrait fill
   if UI.UpdatePortrait then UI:UpdatePortrait() end
@@ -295,6 +320,40 @@ function UI:Build()
     ta:SetPoint("TOP", mainFrame, "TOP", 0, -26)
     ta:SetSize(W-240, 28)
     UI._toastAnchor = ta
+  end
+
+  -- Ensure we react to devMode changes via EventBus
+  EnsureDevModeSubscription()
+
+  -- Resize handle (bottom-right) with persistence
+  if not mainFrame._resizer then
+    local rh = CreateFrame("Frame", nil, mainFrame)
+    rh:SetSize(16,16)
+    rh:SetPoint("BOTTOMRIGHT", -2, 2)
+    rh:EnableMouse(true)
+    local tex = rh:CreateTexture(nil, "OVERLAY")
+    tex:SetAllPoints(); tex:SetTexture("Interface/Tooltips/UI-Tooltip-Background")
+    tex:SetVertexColor(1,1,1,0.15)
+    rh:SetScript("OnEnter", function() tex:SetVertexColor(1,1,1,0.35) end)
+    rh:SetScript("OnLeave", function() tex:SetVertexColor(1,1,1,0.15) end)
+    rh:SetScript("OnMouseDown", function(_, btn)
+      if btn=="LeftButton" then
+        mainFrame:StartSizing("BOTTOMRIGHT")
+        mainFrame:SetUserPlaced(true)
+      end
+    end)
+    rh:SetScript("OnMouseUp", function(_, btn)
+      if btn=="LeftButton" then
+        mainFrame:StopMovingOrSizing()
+        -- Clamp size
+        local w = math.max(780, math.min(mainFrame:GetWidth(), 1400))
+        local h = math.max(420, math.min(mainFrame:GetHeight(), 1000))
+        mainFrame:SetSize(w, h)
+        SaveFrameState(mainFrame)
+      end
+    end)
+    mainFrame:SetResizable(true)
+    mainFrame._resizer = rh
   end
 end
 
@@ -335,12 +394,30 @@ portraitEvents:SetScript("OnEvent", function(_, ev, unit)
 end)
 
 -- Simple toast display (text fades out). durationSec optional (default 3)
-function UI:ShowToast(msg, durationSec)
+-- Show a transient toast. If flush==true, clear any queued toasts so the new one appears immediately.
+function UI:ShowToast(msg, durationSec, flush)
   if not mainFrame or not msg or msg=="" then return end
   UI._toastQueue = UI._toastQueue or (Queue and Queue.new() or {})
+  if flush then
+    -- Clear queue & cancel active (simple approach: hide frame and mark inactive)
+    if UI._toastQueue.Clear then
+      UI._toastQueue:Clear()
+    else
+      -- fallback manual wipe
+      for i=#UI._toastQueue,1,-1 do UI._toastQueue[i]=nil end
+    end
+    if UI._toastFrame then UI._toastFrame:Hide() end
+    UI._toastActive = false
+  end
   if UI._toastQueue.Enqueue then
+    -- Enforce cap
+    while (UI._toastQueue._count or 0) >= TOAST.MAX do
+      -- consume one
+      UI._toastQueue:Dequeue()
+    end
     UI._toastQueue:Enqueue({ text = msg, dur = durationSec or 3 })
   else
+    while #UI._toastQueue >= TOAST.MAX do table.remove(UI._toastQueue,1) end
     table.insert(UI._toastQueue, { text = msg, dur = durationSec or 3 }) -- fallback
   end
   local function ensureFrame()
@@ -388,9 +465,9 @@ function UI:ShowToast(msg, durationSec)
     f:SetHeight(f.text:GetStringHeight() + 22)
     f:Show(); f:SetAlpha(0)
     if UIHelpers and UIHelpers.Fade then
-      UIHelpers.Fade(f, 1, 0.18, function()
+      UIHelpers.Fade(f, 1, TOAST.FADE_IN, function()
         C_Timer.After(nextToast.dur, function()
-          UIHelpers.Fade(f, 0, 0.25, function()
+          UIHelpers.Fade(f, 0, TOAST.FADE_OUT, function()
             f:Hide(); UI._toastActive = false; dequeue()
           end)
         end)
