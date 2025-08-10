@@ -113,18 +113,27 @@ function SettingsUI:Create(parent)
     end
 
     local y = -8
+    local lastBox
     for i=1,3 do
       local box = createMessageBox(container, i)
       box:SetPoint("TOPLEFT", 8, y)
       box:SetPoint("RIGHT", -8, 0)
       y = y - 122
+      lastBox = box
     end
+    -- Resize container to fit exactly the boxes (so following options can be placed just below)
+    container:SetHeight(-y - 8)
 
     ------------------------------------------------------------------
     -- Core Options (reintroduced)
     ------------------------------------------------------------------
     local optsHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    optsHeader:SetPoint("TOPLEFT", container, "BOTTOMLEFT", 4, -24)
+    -- Previously anchored to container bottom (which pushed it off-screen). Now anchor to last message box.
+    if lastBox then
+      optsHeader:SetPoint("TOPLEFT", lastBox, "BOTTOMLEFT", 4, -32)
+    else
+      optsHeader:SetPoint("TOPLEFT", container, "BOTTOMLEFT", 4, -16)
+    end
     optsHeader:SetText("Core Options")
     optsHeader:SetTextColor(0.9,0.8,0.6)
 
