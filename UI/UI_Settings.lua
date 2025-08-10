@@ -126,7 +126,22 @@ function SettingsUI:Create(parent)
 
   -- Channel dropdown (right column)
   local chLabel = right:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  chLabel:SetPoint("TOPLEFT", 0, 0); chLabel:SetText("Broadcast Channel")
+  -- Dev Mode toggle (top of right column)
+  local devCB = CreateCheck(right, "Developer Mode (show Debug tab)", function(on)
+    Config:Set("devMode", on and true or false)
+    if Bus and Bus.Publish then Bus:Publish("ConfigChanged", "devMode", on and true or false) end
+    -- Refresh categories (debug tab visibility)
+    if Addon.UI and Addon.UI.Main and Addon.UI.Main.RefreshCategories then
+      pcall(Addon.UI.Main.RefreshCategories, Addon.UI.Main)
+      if Addon.UI.Main.ShowToast then
+        pcall(Addon.UI.Main.ShowToast, Addon.UI.Main, on and "Dev Mode ENABLED" or "Dev Mode DISABLED")
+      end
+    end
+  end)
+  devCB:SetPoint("TOPLEFT", 0, 0)
+  devCB:SetChecked(Config:Get("devMode", false) and true or false)
+
+  chLabel:SetPoint("TOPLEFT", devCB, "BOTTOMLEFT", 0, -14); chLabel:SetText("Broadcast Channel")
   local chanDrop = CreateDropdown(right, 240); chanDrop:SetPoint("TOPLEFT", chLabel, "BOTTOMLEFT", -16, -6)
   local current = Config:Get("broadcastChannel") or "AUTO"
   local function OnSelect(_, arg1, valueText)
@@ -150,31 +165,202 @@ function SettingsUI:Create(parent)
   end)
   UIDropDownMenu_SetText(chanDrop, current=="AUTO" and "AUTO (Trade > General > Say)" or current)
 
-  -- Messages header + boxes
-  local msgHeader = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  msgHeader:SetPoint("TOPLEFT", grid, "BOTTOMLEFT", PAD, -PAD); msgHeader:SetText("Rotation Messages")
+  -- Rotation Messages container
+  local msgsFrame = CreateFrame("Frame", nil, f, "InsetFrameTemplate3")
+  msgsFrame:SetPoint("TOPLEFT", grid, "BOTTOMLEFT", 4, -PAD)
+  msgsFrame:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD, 0)
+  msgsFrame:SetHeight(260)
 
-  local function makeBox(y, key, label)
-    local fs = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); fs:SetPoint("TOPLEFT", PAD+2, y); fs:SetText(label)
-    local box = CreateFrame("ScrollFrame", nil, f, "InputScrollFrameTemplate")
-    box:SetPoint("TOPLEFT", PAD, y - 18); box:SetPoint("RIGHT", f, "RIGHT", -PAD, 0); box:SetHeight(90)
-    if box.CharCount then box.CharCount:Hide() end
-    local eb = box.EditBox; eb:SetFontObject(ChatFontNormal); eb:SetAutoFocus(false); eb:SetMultiLine(true)
-    eb:SetMaxLetters(0); eb:SetText(Config:Get(key, "")); eb:ClearFocus()
-    eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    eb:SetScript("OnEnterPressed",  function(self) self:Insert("\n") end)
-    eb:SetScript("OnEditFocusLost", function(self)
-      Config:Set(key, self:GetText() or "")
-      if Bus and Bus.Publish then Bus:Publish("ConfigChanged", key, self:GetText() or "") end
-      if Log then Log:Debug("Message changed {Key}", { Key=key }) end
+  local msgHeader = msgsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  msgHeader:SetPoint("TOPLEFT", 10, -8)
+  msgHeader:SetText("Rotation Messages")
+
+  local ButtonLib = Addon.require and Addon.require("Tools.ButtonLib")
+  local addBtn = ButtonLib and ButtonLib:Create(msgsFrame, { text="Add", variant="primary", size="sm" }) or CreateFrame("Button", nil, msgsFrame, "UIPanelButtonTemplate")
+  addBtn:SetPoint("TOPRIGHT", -10, -6)
+  if not addBtn._text then addBtn:SetText("Add") end
+  local removeBtn = ButtonLib and ButtonLib:Create(msgsFrame, { text="Remove", variant="secondary", size="sm" }) or CreateFrame("Button", nil, msgsFrame, "UIPanelButtonTemplate")
+  removeBtn:SetPoint("RIGHT", addBtn, "LEFT", -6, 0)
+  if not removeBtn._text then removeBtn:SetText("Remove") end
+
+  local accordion = CreateFrame("Frame", nil, msgsFrame)
+  accordion:SetPoint("TOPLEFT", msgHeader, "BOTTOMLEFT", -2, -10)
+  accordion:SetPoint("RIGHT", msgsFrame, "RIGHT", -12, 0)
+
+  local UIHelpers = Addon.require and Addon.require("Tools.UIHelpers")
+  if UIHelpers and UIHelpers.CreateAccordion then
+    local sections = {
+      {
+        key="customMessage1", label="Message 1", expanded=true,
+        getText=function() return Config:Get("customMessage1", "") end,
+        setText=function(txt)
+          Config:Set("customMessage1", txt or "")
+          if Bus and Bus.Publish then Bus:Publish("ConfigChanged", "customMessage1", txt or "") end
+          if Log then Log:Debug("Message changed {Key}", { Key="customMessage1" }) end
+        end
+      },
+      {
+        key="customMessage2", label="Message 2",
+        getText=function() return Config:Get("customMessage2", "") end,
+        setText=function(txt)
+          Config:Set("customMessage2", txt or "")
+          if Bus and Bus.Publish then Bus:Publish("ConfigChanged", "customMessage2", txt or "") end
+          if Log then Log:Debug("Message changed {Key}", { Key="customMessage2" }) end
+        end
+      },
+      {
+        key="customMessage3", label="Message 3",
+        getText=function() return Config:Get("customMessage3", "") end,
+        setText=function(txt)
+          Config:Set("customMessage3", txt or "")
+          if Bus and Bus.Publish then Bus:Publish("ConfigChanged", "customMessage3", txt or "") end
+          if Log then Log:Debug("Message changed {Key}", { Key="customMessage3" }) end
+        end
+      },
+    }
+    local acc = UIHelpers.CreateAccordion(accordion, sections, { collapsedHeight=26, contentHeight=100, iconCollapsed="►", iconExpanded="▼" })
+    -- Inject small icon to left of each message title (after sections built)
+    if acc and acc.sections and acc.sections.ForEach then
+      acc.sections:ForEach(function(sec)
+        if sec and sec.titleFS and not sec._msgIcon then
+          local icon = sec:CreateTexture(nil, "OVERLAY")
+          icon:SetSize(14,14)
+          icon:SetPoint("LEFT", sec.titleFS, "LEFT", -18, 0)
+          icon:SetTexture(134400) -- chat bubble texture ID or generic icon
+          sec._msgIcon = icon
+          -- Shift title right to make room
+          sec.titleFS:ClearAllPoints()
+          sec.titleFS:SetPoint("LEFT", sec.arrow, "RIGHT", 24, 0)
+        end
+      end)
+    end
+    acc:SetPoint("TOPLEFT", accordion, "TOPLEFT", 0, 0)
+    acc:SetPoint("RIGHT", accordion, "RIGHT", 0, 0)
+    accordion._component = acc
+    -- Expose for dynamic runtime modification via slash commands
+    SettingsUI._messageAccordion = acc
+    SettingsUI._messageAccordionHost = accordion
+
+    -- Helper to build a section definition for a given message index (backwards compatible with original keys)
+    function SettingsUI:BuildMessageSectionDef(index)
+      index = tonumber(index)
+      if not index or index < 1 then return nil end
+      local key = "customMessage"..index
+      return {
+        key=key,
+        label="Message "..index,
+        expanded = (index == 1),
+        getText=function() return Config:Get(key, "") end,
+        setText=function(txt)
+          Config:Set(key, txt or "")
+          if Bus and Bus.Publish then Bus:Publish("ConfigChanged", key, txt or "") end
+          if Log then Log:Debug("Message changed {Key}", { Key=key }) end
+        end
+      }
+    end
+
+    -- Add a message section dynamically (creates config key if missing)
+    function SettingsUI:AddMessage(index)
+      index = tonumber(index)
+      if not index or index < 1 then return false, "Invalid index" end
+      local key = "customMessage"..index
+      if not Config:Get(key) then Config:Set(key, "") end
+      local acc = self._messageAccordion
+      if acc and acc.GetSection and not acc:GetSection(key) then
+        local def = self:BuildMessageSectionDef(index)
+        if def then
+          local newSec = acc:AddSection(def)
+          if newSec and newSec.titleFS and not newSec._msgIcon then
+            local icon = newSec:CreateTexture(nil, "OVERLAY")
+            icon:SetSize(14,14)
+            icon:SetPoint("LEFT", newSec.titleFS, "LEFT", -18, 0)
+            icon:SetTexture(134400)
+            newSec._msgIcon = icon
+            newSec.titleFS:ClearAllPoints(); newSec.titleFS:SetPoint("LEFT", newSec.arrow, "RIGHT", 24, 0)
+          end
+        end
+        -- Resize host after dynamic addition
+        if self._messageAccordionHost then
+          self._messageAccordionHost:SetHeight(acc:GetHeight())
+        end
+        return true, "Added message "..index
+      end
+      return false, "Message already exists"
+    end
+
+    -- Remove a message section dynamically (also clears config key)
+    function SettingsUI:RemoveMessage(index)
+      index = tonumber(index)
+      if not index or index < 1 then return false, "Invalid index" end
+      local key = "customMessage"..index
+      local acc = self._messageAccordion
+      if acc and acc.GetSection and acc:GetSection(key) then
+        acc:RemoveSection(key)
+        Config:Set(key, nil)
+        if self._messageAccordionHost then
+          self._messageAccordionHost:SetHeight(acc:GetHeight())
+        end
+        return true, "Removed message "..index
+      end
+      return false, "Message not found"
+    end
+
+    -- List existing message indices (sequential scan)
+    function SettingsUI:ListMessages()
+      local list = {}
+      for i=1,50 do -- hard cap
+        local k = "customMessage"..i
+        if Config:Get(k) ~= nil then
+          table.insert(list, i)
+        end
+      end
+      return list
+    end
+
+    -- Ensure at least default 3 messages present (backwards compatibility for fresh installs)
+    for i=1,3 do
+      local k = "customMessage"..i
+      if Config:Get(k) == nil then Config:Set(k, "") end
+    end
+    -- After layout adjust bottom anchor margin by extending parent frame
+    local totalH = acc:GetHeight()
+    accordion:SetHeight(totalH)
+
+    local function RefreshContainerHeight()
+      local innerH = acc:GetHeight() + 44
+      msgsFrame:SetHeight(math.min(600, innerH))
+    end
+
+    addBtn:SetScript("OnClick", function()
+      local list = SettingsUI:ListMessages()
+      local max = 0; for _,i in ipairs(list) do if i>max then max=i end end
+      local nextIndex = max + 1
+      local ok, msg = SettingsUI:AddMessage(nextIndex)
+      if ok and accordion._component and accordion._component.Open then
+        C_Timer.After(0, function()
+          RefreshContainerHeight()
+          accordion._component:Open("customMessage"..nextIndex)
+        end)
+      end
+      if Addon.UI and Addon.UI.Main and Addon.UI.Main.ShowToast then
+        pcall(Addon.UI.Main.ShowToast, Addon.UI.Main, ok and ("Added Message "..nextIndex) or msg)
+      end
     end)
-    return box
-  end
 
-  local topY = - (PAD + grid:GetHeight() + 24)
-  local b1 = makeBox(topY,         "customMessage1", "Message 1")
-  local b2 = makeBox(topY-120-12,  "customMessage2", "Message 2")
-  local b3 = makeBox(topY-240-24,  "customMessage3", "Message 3")
+    removeBtn:SetScript("OnClick", function()
+      local list = SettingsUI:ListMessages(); table.sort(list)
+      local last = list[#list]
+      if not last or last <= 3 then
+        if Addon.UI and Addon.UI.Main and Addon.UI.Main.ShowToast then pcall(Addon.UI.Main.ShowToast, Addon.UI.Main, "Cannot remove core messages") end
+        return
+      end
+      local ok, msg = SettingsUI:RemoveMessage(last)
+      if Addon.UI and Addon.UI.Main and Addon.UI.Main.ShowToast then pcall(Addon.UI.Main.ShowToast, Addon.UI.Main, ok and ("Removed Message "..last) or msg) end
+      RefreshContainerHeight()
+    end)
+
+    C_Timer.After(0, RefreshContainerHeight)
+  end
 
   function f:Render() end
   return f

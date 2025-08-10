@@ -23,6 +23,7 @@ local DEFAULTS = {
     customMessage3      = "",
     messageCollapse     = {},   -- accordion sections collapsed
     messageOpenKey      = "customMessage1",
+    devMode             = false, -- enables developer-only UI (debug tab etc.)
 
     -- UI invite feedback durations (seconds)
     inviteClickCooldown = 3,
@@ -96,6 +97,10 @@ end
 
 function Config:All()
     return DB
+end
+
+function Config:IsDev()
+    return not not DB.devMode
 end
 
 function Config:Reset()

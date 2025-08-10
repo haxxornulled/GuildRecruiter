@@ -158,18 +158,23 @@ function M:Create(parent)
         row.srcFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.srcFS:SetPoint("LEFT", row, "LEFT", colX, 0); row.srcFS:SetWidth(columns[6].width); colX = colX + columns[6].width + 6
 
-        row.inviteBtn = CreateFrame("Button", nil, row)
+  local ButtonLib = (Addon.require and Addon.require("Tools.ButtonLib"))
+        row.inviteBtn = (ButtonLib and ButtonLib:Create(row, { text="+", variant="primary", size="sm" })) or CreateFrame("Button", nil, row)
         row.inviteBtn:SetPoint("LEFT", row, "LEFT", colX, -2)
-        row.inviteBtn:SetSize(22,22)
-        row.inviteBtn.icon = row.inviteBtn:CreateTexture(nil, "ARTWORK")
-        row.inviteBtn.icon:SetAllPoints(); row.inviteBtn.icon:SetTexture(INVITE_ICON)
+        row.inviteBtn:SetSize(26,22)
+        if not row.inviteBtn._text then
+          row.inviteBtn.icon = row.inviteBtn:CreateTexture(nil, "ARTWORK")
+          row.inviteBtn.icon:SetAllPoints(); row.inviteBtn.icon:SetTexture(INVITE_ICON)
+        end
         colX = colX + columns[7].width + 6
 
-        row.removeBtn = CreateFrame("Button", nil, row)
+        row.removeBtn = (ButtonLib and ButtonLib:Create(row, { text="×", variant="danger", size="sm" })) or CreateFrame("Button", nil, row)
         row.removeBtn:SetPoint("LEFT", row, "LEFT", colX, -2)
-        row.removeBtn:SetSize(22,22)
-        row.removeBtn.icon = row.removeBtn:CreateTexture(nil, "ARTWORK")
-        row.removeBtn.icon:SetAllPoints(); row.removeBtn.icon:SetTexture(REMOVE_ICON)
+        row.removeBtn:SetSize(26,22)
+        if not row.removeBtn._text then
+          row.removeBtn.icon = row.removeBtn:CreateTexture(nil, "ARTWORK")
+          row.removeBtn.icon:SetAllPoints(); row.removeBtn.icon:SetTexture(REMOVE_ICON)
+        end
 
         -- cooldown state
         row.inviteCooldownEnd = 0
@@ -308,7 +313,10 @@ function M:Create(parent)
   end
 
   local originalShow = f.Show
-  f.Show = function(self, ...) self:Render(); if originalShow then originalShow(self, ...) end end
+  f.Show = function(self)
+    self:Render()
+    if originalShow then originalShow(self) end
+  end
   return f
 end
 

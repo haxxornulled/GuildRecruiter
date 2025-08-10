@@ -88,16 +88,22 @@ function M:Create(parent)
         row.col3:SetPoint("LEFT", row, "LEFT", colX, 0); row.col3:SetWidth(cols[3].width); colX = colX + cols[3].width + 6
         row.col4 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.col4:SetPoint("LEFT", row, "LEFT", colX, 0); row.col4:SetWidth(cols[4].width); colX = colX + cols[4].width + 6
-        local btn = CreateFrame("Button", nil, row); btn:SetPoint("LEFT", row, "LEFT", colX, -2)
-        btn:SetSize(22,22); btn.icon = btn:CreateTexture(nil, "ARTWORK")
-        btn.icon:SetAllPoints(); btn.icon:SetTexture(REMOVE_ICON); row.removeBtn = btn
+        local ButtonLib = (Addon.require and Addon.require("Tools.ButtonLib"))
+        local btn = (ButtonLib and ButtonLib:Create(row, { text="×", variant="danger", size="sm" })) or CreateFrame("Button", nil, row)
+        btn:SetPoint("LEFT", row, "LEFT", colX, -2)
+        btn:SetSize(26,22)
+        if not btn._text then
+          btn.icon = btn:CreateTexture(nil, "ARTWORK")
+          btn.icon:SetAllPoints(); btn.icon:SetTexture(REMOVE_ICON)
+        end
+        row.removeBtn = btn
         self.rows[i] = row
       end
 
       row:SetPoint("TOPLEFT", 0, y)
       row.bg:SetColorTexture((i%2==1) and 0.95 or 1, (i%2==1) and 0.89 or 1, (i%2==1) and 0.68 or 1, (i%2==1) and 0.08 or 0.02)
 
-      row.col1:SetText(i)
+  row.col1:SetText(tostring(i))
       row.col2:SetText(nameFromGuid(e.guid))
       row.col3:SetText(e.reason or "manual")
       row.col4:SetText(fmtWhen(e.ts))
@@ -121,7 +127,10 @@ function M:Create(parent)
   end
 
   local originalShow = f.Show
-  f.Show = function(self, ...) self:Render(); if originalShow then originalShow(self, ...) end end
+  f.Show = function(self)
+    self:Render()
+    if originalShow then originalShow(self) end
+  end
   return f
 end
 

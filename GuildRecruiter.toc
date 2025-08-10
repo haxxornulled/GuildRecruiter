@@ -12,6 +12,8 @@ Core.lua
 Collections/List.lua
 Collections/Dictionary.lua
 Collections/Extensions.lua
+Collections/Queue.lua
+Collections/AccordionSections.lua
 
 # Infrastructure services
 Config.lua
@@ -23,6 +25,12 @@ InviteService.lua
 Helpers/ChatChannelHelper.lua
 Helpers/RoleHelper.lua
 ProspectsManager.lua
+
+# Tools (utility managers used by UI and services)
+Tools/CategoryManager.lua
+Tools/Tokens.lua
+Tools/UIHelpers.lua
+Tools/ButtonLib.lua
 
 # UI (load foundational style/theme + side panel before main frame)
 UI/Style.lua

@@ -503,7 +503,12 @@ function List:__tostring()
 end
 
 -- Export for DI container
+-- Primary registration (simple key)
 Addon.provide("List", List, { lifetime = "SingleInstance" })
+-- Namespaced alias so callers can use Addon.require("Collections.List") consistently
+if Addon.provide then
+    pcall(Addon.provide, "Collections.List", List, { lifetime = "SingleInstance" })
+end
 Addon.List = List
 
 return List

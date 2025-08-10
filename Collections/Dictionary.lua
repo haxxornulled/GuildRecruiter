@@ -324,7 +324,12 @@ function Dictionary:__tostring()
 end
 
 -- Export for DI container
+-- Primary registration
 Addon.provide("Dictionary", Dictionary, { lifetime = "SingleInstance" })
+-- Namespaced alias for consistency with Addon.require("Collections.Dictionary")
+if Addon.provide then
+    pcall(Addon.provide, "Collections.Dictionary", Dictionary, { lifetime = "SingleInstance" })
+end
 Addon.Dictionary = Dictionary
 
 return Dictionary

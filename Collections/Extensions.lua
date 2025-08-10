@@ -227,6 +227,8 @@ Extensions.EnableGlobal = EnableTableExtensions
 
 -- Export for DI container
 Addon.provide("TableExtensions", Extensions, { lifetime = "SingleInstance" })
+-- Namespaced alias for parity with other collections
+pcall(Addon.provide, "Collections.Extensions", Extensions, { lifetime = "SingleInstance" })
 Addon.TableExtensions = Extensions
 
 -- Convenience global access (like C# using statements)
