@@ -42,7 +42,11 @@ function SettingsUI:Create(parent)
             f.text:SetText(data.text or "")
           end)
         elseif kind == "spacer" then
-          factory("Frame", function(f, data) f:SetHeight(data.height or 12) end)
+          -- Use BackdropTemplate (generic frame template) instead of bare 'Frame' which ScrollBox can't resolve.
+          factory("BackdropTemplate", function(f, data)
+            f:SetHeight(data.height or 12)
+            if not f._cleared then f:SetBackdrop(nil); f._cleared = true end
+          end)
         elseif kind == "message" then
           factory("BackdropTemplate", function(f, data)
             if not f._built then
@@ -98,21 +102,23 @@ function SettingsUI:Create(parent)
             edit:GetScript("OnTextChanged")(edit, false)
           end)
         elseif kind == "toggle" then
-          factory("CheckButton", function(cb, data)
+          factory("ChatConfigCheckButtonTemplate", function(cb, data)
             if not cb._built then
               cb.Text = cb.Text or cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
               cb.Text:SetPoint("LEFT", cb, "RIGHT", 4, 0)
               cb:SetScript("OnClick", function(self)
                 PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
                 local v = self:GetChecked() and true or false
-                if cfg and cfg.Set then cfg:Set(data.key, v) end
-                if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", data.key, v) end
+                if data.onSet then data.onSet(v) else if cfg and cfg.Set then cfg:Set(data.key, v) end end
+                if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", data.key, (data.onGet and data.onGet()) or v) end
               end)
               cb._built = true
             end
             cb:SetHeight(24)
             cb.Text:SetText(data.label or data.key)
-            if cfg and cfg.Get then cb:SetChecked(cfg:Get(data.key, data.default or false) and true or false) end
+            local val
+            if data.onGet then val = data.onGet() else if cfg and cfg.Get then val = cfg:Get(data.key, data.default or false) end end
+            cb:SetChecked(val and true or false)
           end)
         elseif kind == "slider" then
           factory("BackdropTemplate", function(f, data)
@@ -131,15 +137,18 @@ function SettingsUI:Create(parent)
             local s = f.slider
             s:SetMinMaxValues(data.min, data.max)
             s:SetValueStep(data.step or 1)
-            local current = cfg and cfg:Get(data.key, data.default or data.min) or data.min
+            local current
+            if data.onGet then current = data.onGet() else current = cfg and cfg:Get(data.key, data.default or data.min) or data.min end
             s:SetScript("OnValueChanged", function(_, v)
               if data.step and data.step>=1 then v = math.floor(v+0.5) end
-              if cfg and cfg.Set then cfg:Set(data.key, v) end
-              if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", data.key, v) end
-              f.valueText:SetText( (data.fmt and data.fmt(v)) or tostring(v) )
+              if data.onSet then data.onSet(v) else if cfg and cfg.Set then cfg:Set(data.key, v) end end
+              local publishVal = data.onGet and data.onGet() or v
+              if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", data.key, publishVal) end
+              f.valueText:SetText( (data.fmt and data.fmt(publishVal)) or tostring(publishVal) )
             end)
             s:SetValue(current)
-            f.valueText:SetText( (data.fmt and data.fmt(current)) or tostring(current) )
+            local displayVal = data.onGet and data.onGet() or current
+            f.valueText:SetText( (data.fmt and data.fmt(displayVal)) or tostring(displayVal) )
           end)
         elseif kind == "dropdown" then
           factory("BackdropTemplate", function(f, data)
@@ -181,7 +190,9 @@ function SettingsUI:Create(parent)
       provider:Insert({ kind="header", text="Core Options" })
       provider:Insert({ kind="toggle", key="broadcastEnabled", label="Enable Broadcast Rotation", default=false })
       provider:Insert({ kind="slider", key="broadcastInterval", label="Base Interval (sec)", min=60, max=900, step=5, default=300, fmt=function(v) return v.."s" end })
-      provider:Insert({ kind="slider", key="jitterPercent", label="Interval Jitter (± %)", min=0, max=50, step=1, default=15, fmt=function(v) return v.."%" end })
+      provider:Insert({ kind="slider", key="jitterPercent", label="Interval Jitter (± %)", min=0, max=50, step=1, default=15, fmt=function(v) return v.."%" end,
+        onGet=function() local raw = (cfg and cfg:Get("jitterPercent", 0.15)) or 0.15; return math.floor(raw*100 + 0.5) end,
+        onSet=function(v) local pct = math.max(0, math.min(50, v))/100.0; if cfg and cfg.Set then cfg:Set("jitterPercent", pct) end end })
       provider:Insert({ kind="slider", key="inviteClickCooldown", label="Invite Cooldown (sec)", min=0, max=10, step=1, default=3, fmt=function(v) return v.."s" end })
       provider:Insert({ kind="slider", key="invitePillDuration", label="Invite Status Pill (sec)", min=0, max=10, step=1, default=3, fmt=function(v) return v.."s" end })
       provider:Insert({ kind="toggle", key="inviteCycleEnabled", label="Cycle Invite Messages", default=true })
