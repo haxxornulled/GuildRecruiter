@@ -64,7 +64,12 @@ function SettingsUI:Create(parent)
       edit:SetMaxLetters(255)
       edit:SetAutoFocus(false)
       edit:SetFontObject(ChatFontNormal)
+      edit:SetTextColor(1,1,1,1) -- explicit white for readability
       edit:SetWidth(scroll:GetWidth()-18)
+      -- Keep width in sync after layout (initial size can be 0 during creation)
+      scroll:HookScript("OnSizeChanged", function(_, w)
+        if w and w > 20 then edit:SetWidth(w - 18) end
+      end)
       edit:SetText(cfg and cfg:Get(key, "") or "")
 
       local counter = boxFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -84,6 +89,12 @@ function SettingsUI:Create(parent)
           local text = self:GetText() or ""
           if cfg and cfg.Set then cfg:Set(key, text) end
           if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", key, text) end
+          -- Prevent losing focus when buffer becomes empty due to some templates auto-blurring
+          if (self:GetNumLetters() or (self:GetText() and #self:GetText() or 0)) == 0 then
+            C_Timer.After(0, function()
+              if self and self:IsVisible() and not self:HasFocus() then self:SetFocus() end
+            end)
+          end
         end
       end)
       edit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
@@ -108,6 +119,185 @@ function SettingsUI:Create(parent)
       box:SetPoint("RIGHT", -8, 0)
       y = y - 122
     end
+
+    ------------------------------------------------------------------
+    -- Core Options (reintroduced)
+    ------------------------------------------------------------------
+    local optsHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    optsHeader:SetPoint("TOPLEFT", container, "BOTTOMLEFT", 4, -24)
+    optsHeader:SetText("Core Options")
+    optsHeader:SetTextColor(0.9,0.8,0.6)
+
+    -- Helpers
+    local function CreateCheck(parent, label, getFn, setFn)
+      local cb = CreateFrame("CheckButton", nil, parent, "ChatConfigCheckButtonTemplate")
+      cb.Text = cb.Text or cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      cb.Text:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+      cb.Text:SetText(label)
+      cb:SetScript("OnClick", function(self)
+        PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+        if setFn then setFn(self:GetChecked()) end
+      end)
+      if getFn then cb:SetChecked(getFn() and true or false) end
+      return cb
+    end
+
+    local function CreateSlider(parent, label, minV, maxV, step, getFn, setFn, fmt)
+      local holder = CreateFrame("Frame", nil, parent)
+      holder:SetSize(260, 42)
+      local text = holder:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      text:SetPoint("TOPLEFT", 0, 0); text:SetText(label); text:SetTextColor(0.9,0.8,0.6)
+      local slider = CreateFrame("Slider", nil, holder, "OptionsSliderTemplate")
+      slider:SetPoint("TOPLEFT", text, "BOTTOMLEFT", 0, -6)
+      slider:SetWidth(180)
+      slider:SetMinMaxValues(minV, maxV)
+      slider:SetValueStep(step)
+      if slider.Low then slider.Low:SetText("") end
+      if slider.High then slider.High:SetText("") end
+      if slider.Text then slider.Text:SetText("") end
+      local valText = holder:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      valText:SetPoint("LEFT", slider, "RIGHT", 10, 0)
+      local function render(v) valText:SetText((fmt and fmt(v)) or tostring(v)) end
+      slider:SetScript("OnValueChanged", function(_, v)
+        if step >= 1 then v = math.floor(v + 0.5) end
+        render(v)
+        if setFn then setFn(v) end
+      end)
+      local init = getFn and getFn() or minV
+      slider:SetValue(init)
+      render(init)
+      holder.slider = slider
+      return holder
+    end
+
+    local function CreateDropdown(parent, label, width, entries, getFn, setFn)
+      local holder = CreateFrame("Frame", nil, parent)
+      holder:SetSize(width + 40, 52)
+      local text = holder:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+      text:SetPoint("TOPLEFT", 0, 0); text:SetText(label); text:SetTextColor(0.9,0.8,0.6)
+      local dd = CreateFrame("Frame", nil, holder, "UIDropDownMenuTemplate")
+      dd:SetPoint("TOPLEFT", text, "BOTTOMLEFT", -16, -4)
+      UIDropDownMenu_SetWidth(dd, width)
+      local current = getFn and getFn() or entries[1].value
+      UIDropDownMenu_Initialize(dd, function()
+        for _, item in ipairs(entries) do
+          local info = UIDropDownMenu_CreateInfo()
+            info.text = item.text
+            info.value = item.value
+            info.checked = (item.value == current)
+            info.func = function()
+              current = item.value
+              UIDropDownMenu_SetText(dd, item.text)
+              if setFn then setFn(item.value) end
+            end
+          UIDropDownMenu_AddButton(info)
+        end
+      end)
+      for _, item in ipairs(entries) do if item.value == current then UIDropDownMenu_SetText(dd, item.text) break end end
+      return holder
+    end
+
+    local colLeft  = CreateFrame("Frame", nil, frame)
+    colLeft:SetPoint("TOPLEFT", optsHeader, "BOTTOMLEFT", 0, -8)
+    colLeft:SetSize(340, 260)
+    local colRight = CreateFrame("Frame", nil, frame)
+    colRight:SetPoint("TOPLEFT", colLeft, "TOPRIGHT", 40, 0)
+    colRight:SetSize(340, 260)
+
+    -- Broadcast enable
+    local broadcastCB = CreateCheck(colLeft, "Enable Broadcast Rotation",
+      function() return cfg and cfg:Get("broadcastEnabled", false) end,
+      function(v)
+        if cfg and cfg.Set then cfg:Set("broadcastEnabled", v and true or false) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "broadcastEnabled", v and true or false) end
+      end)
+    broadcastCB:SetPoint("TOPLEFT", 0, 0)
+
+    -- Base interval
+    local intervalSlider = CreateSlider(colLeft, "Base Interval (sec)", 60, 900, 5,
+      function() return tonumber(cfg and cfg:Get("broadcastInterval", 300)) or 300 end,
+      function(v)
+        if cfg and cfg.Set then cfg:Set("broadcastInterval", v) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "broadcastInterval", v) end
+      end,
+      function(v) return string.format("%ds", v) end)
+    intervalSlider:SetPoint("TOPLEFT", broadcastCB, "BOTTOMLEFT", 0, -18)
+
+    -- Jitter
+    local jitterSlider = CreateSlider(colLeft, "Interval Jitter (± %)", 0, 50, 1,
+      function() return math.floor(((cfg and cfg:Get("jitterPercent", 0.15)) or 0.15) * 100 + 0.5) end,
+      function(v)
+        local pct = math.max(0, math.min(50, v)) / 100.0
+        if cfg and cfg.Set then cfg:Set("jitterPercent", pct) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "jitterPercent", pct) end
+      end,
+      function(v) return string.format("%d%%", v) end)
+    jitterSlider:SetPoint("TOPLEFT", intervalSlider, "BOTTOMLEFT", 0, -22)
+
+    -- Invite cooldown
+    local inviteCDSlider = CreateSlider(colLeft, "Invite Cooldown (sec)", 0, 10, 1,
+      function() return tonumber(cfg and cfg:Get("inviteClickCooldown", 3)) or 3 end,
+      function(v)
+        if cfg and cfg.Set then cfg:Set("inviteClickCooldown", v) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "inviteClickCooldown", v) end
+      end,
+      function(v) return string.format("%ds", v) end)
+    inviteCDSlider:SetPoint("TOPLEFT", jitterSlider, "BOTTOMLEFT", 0, -22)
+
+    -- Invite pill duration
+    local pillSlider = CreateSlider(colLeft, "Invite Status Pill (sec)", 0, 10, 1,
+      function() return tonumber(cfg and cfg:Get("invitePillDuration", 3)) or 3 end,
+      function(v)
+        if cfg and cfg.Set then cfg:Set("invitePillDuration", v) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "invitePillDuration", v) end
+      end,
+      function(v) return string.format("%ds", v) end)
+    pillSlider:SetPoint("TOPLEFT", inviteCDSlider, "BOTTOMLEFT", 0, -22)
+
+    -- Cycle messages
+    local cycleCB = CreateCheck(colRight, "Cycle Invite Messages",
+      function() return cfg and cfg:Get("inviteCycleEnabled", true) end,
+      function(v)
+        if cfg and cfg.Set then cfg:Set("inviteCycleEnabled", v and true or false) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "inviteCycleEnabled", v and true or false) end
+      end)
+    cycleCB:SetPoint("TOPLEFT", 0, 0)
+
+    -- Auto-blacklist declines
+    local autoBL = CreateCheck(colRight, "Auto-Blacklist Declines",
+      function() return cfg and cfg:Get("autoBlacklistDeclines", true) end,
+      function(v)
+        if cfg and cfg.Set then cfg:Set("autoBlacklistDeclines", v and true or false) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "autoBlacklistDeclines", v and true or false) end
+      end)
+    autoBL:SetPoint("TOPLEFT", cycleCB, "BOTTOMLEFT", 0, -14)
+
+    -- Dev mode
+    local devCB = CreateCheck(colRight, "Developer Mode (Debug Tab)",
+      function() return cfg and cfg:Get("devMode", false) end,
+      function(v)
+        if cfg and cfg.Set then cfg:Set("devMode", v and true or false) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "devMode", v and true or false) end
+      end)
+    devCB:SetPoint("TOPLEFT", autoBL, "BOTTOMLEFT", 0, -14)
+
+    -- Broadcast channel
+    local channelDD = CreateDropdown(colRight, "Broadcast Channel", 220, {
+        { text = "AUTO (Trade > General > Say)", value = "AUTO" },
+        { text = "SAY", value = "SAY" },
+        { text = "YELL", value = "YELL" },
+        { text = "GUILD", value = "GUILD" },
+        { text = "OFFICER", value = "OFFICER" },
+        { text = "INSTANCE_CHAT", value = "INSTANCE_CHAT" },
+        { text = "CHANNEL:Trade", value = "CHANNEL:Trade" },
+        { text = "CHANNEL:General", value = "CHANNEL:General" },
+      },
+      function() return cfg and cfg:Get("broadcastChannel", "AUTO") end,
+      function(val)
+        if cfg and cfg.Set then cfg:Set("broadcastChannel", val) end
+        if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", "broadcastChannel", val) end
+      end)
+    channelDD:SetPoint("TOPLEFT", devCB, "BOTTOMLEFT", 0, -26)
   function frame:Render() end
   return frame
 end
