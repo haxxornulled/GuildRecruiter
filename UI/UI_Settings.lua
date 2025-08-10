@@ -2,8 +2,26 @@ local _, Addon = ...
 local SettingsUI = {}
 
 function SettingsUI:Create(parent)
-  local frame = CreateFrame("Frame", nil, parent)
-  frame:SetAllPoints(parent)
+  -- Outer frame (returned) fills parent; inner scroll child hosts content
+  local outer = CreateFrame("Frame", nil, parent)
+  outer:SetAllPoints(parent)
+  local scroll = CreateFrame("ScrollFrame", nil, outer, "UIPanelScrollFrameTemplate")
+  scroll:SetPoint("TOPLEFT", 0, 0)
+  scroll:SetPoint("BOTTOMRIGHT", 0, 0)
+  local frame = CreateFrame("Frame", nil, scroll) -- content frame
+  frame:SetPoint("TOPLEFT")
+  frame:SetWidth(parent:GetWidth() - 36) -- leave room for scrollbar
+  scroll:SetScrollChild(frame)
+  scroll:EnableMouseWheel(true)
+  scroll:SetScript("OnMouseWheel", function(self, delta)
+    local current = self:GetVerticalScroll()
+    local step = 40
+    if delta > 0 then
+      self:SetVerticalScroll(math.max(0, current - step))
+    else
+      self:SetVerticalScroll(math.min(self:GetVerticalScrollRange(), current + step))
+    end
+  end)
   local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   title:SetPoint("TOPLEFT", 16, -16)
   title:SetText("Settings (Rebuild)")
@@ -127,7 +145,7 @@ function SettingsUI:Create(parent)
     ------------------------------------------------------------------
     -- Core Options (reintroduced)
     ------------------------------------------------------------------
-    local optsHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  local optsHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     -- Previously anchored to container bottom (which pushed it off-screen). Now anchor to last message box.
     if lastBox then
       optsHeader:SetPoint("TOPLEFT", lastBox, "BOTTOMLEFT", 4, -32)
@@ -308,7 +326,28 @@ function SettingsUI:Create(parent)
       end)
     channelDD:SetPoint("TOPLEFT", devCB, "BOTTOMLEFT", 0, -26)
   function frame:Render() end
-  return frame
+  -- After one frame, measure bottom element and set content height to enable scrolling.
+  C_Timer.After(0, function()
+    if not outer or not frame or not frame:IsVisible() then return end
+    local lowest = 0
+    -- Try to find the lowest child (approximate)
+    for _, child in ipairs({frame:GetChildren()}) do
+      if child:IsShown() then
+        local bottom = child:GetBottom()
+        if bottom and bottom < lowest or lowest == 0 then lowest = bottom end
+      end
+    end
+    local top = frame:GetTop()
+    if top and lowest and lowest > 0 then
+      local h = top - lowest + 40
+      if h < 400 then h = 400 end
+      frame:SetHeight(h)
+    else
+      -- Fallback height
+      frame:SetHeight(1000)
+    end
+  end)
+  return outer
 end
 
 Addon.provide("UI.Settings", SettingsUI)
