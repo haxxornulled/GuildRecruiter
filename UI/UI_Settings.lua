@@ -2,9 +2,228 @@ local _, Addon = ...
 local SettingsUI = {}
 
 function SettingsUI:Create(parent)
-  -- Simple static frame; current content fits without scroll. (Scroll was removed due to blank display.)
+  -- Pro path: ScrollBox + DataProvider (Dragonflight+). Falls back to static layout if API unavailable or fails.
+  local cfg = Addon.Config
+  local bus = Addon.EventBus
+  if CreateScrollBoxListLinearView and ScrollUtil and CreateDataProvider then
+    local ok, result = pcall(function()
+      local outer = CreateFrame("Frame", nil, parent)
+      outer:SetAllPoints(parent)
+
+      local scrollBox = CreateFrame("Frame", nil, outer, "WowScrollBoxList")
+      local scrollBar  = CreateFrame("EventFrame", nil, outer, "MinimalScrollBar")
+      scrollBox:SetPoint("TOPLEFT", 0, 0)
+      scrollBox:SetPoint("BOTTOMRIGHT", -20, 0)
+      scrollBar:SetPoint("TOPLEFT", scrollBox, "TOPRIGHT", 0, 0)
+      scrollBar:SetPoint("BOTTOMLEFT", scrollBox, "BOTTOMRIGHT", 0, 0)
+
+      local view = CreateScrollBoxListLinearView()
+      view:SetPadding(8, 8, 12, 8, 0) -- top, bottom, left, right, between
+
+      -- Element factory supporting multiple kinds.
+      view:SetElementFactory(function(factory, elementData)
+        local kind = elementData.kind
+        if kind == "header" then
+          factory("BackdropTemplate", function(f, data)
+            if not f._built then
+              f:SetBackdrop({ bgFile="Interface/Buttons/WHITE8x8" })
+              f:SetBackdropColor(0.12,0.12,0.14,0.55)
+              local line = f:CreateTexture(nil, "ARTWORK")
+              line:SetColorTexture(0.35,0.34,0.30,0.80)
+              line:SetPoint("BOTTOMLEFT", 0, 0)
+              line:SetPoint("BOTTOMRIGHT", 0, 0)
+              line:SetHeight(1)
+              f.text = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+              f.text:SetPoint("LEFT", 6, 0)
+              f.text:SetTextColor(0.9,0.8,0.6)
+              f._built = true
+            end
+            f:SetHeight(26)
+            f.text:SetText(data.text or "")
+          end)
+        elseif kind == "spacer" then
+          factory("Frame", function(f, data) f:SetHeight(data.height or 12) end)
+        elseif kind == "message" then
+          factory("BackdropTemplate", function(f, data)
+            if not f._built then
+              f:SetBackdrop({ bgFile="Interface/Buttons/WHITE8x8", edgeFile="Interface/Tooltips/UI-Tooltip-Border", edgeSize=10, tile=true, tileSize=8, insets={left=2,right=2,top=2,bottom=2} })
+              f:SetBackdropColor(0,0,0,0.25)
+              f:SetBackdropBorderColor(0.3,0.3,0.35,0.85)
+              f.label = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+              f.label:SetPoint("TOPLEFT", 8, -6)
+              local scroll = CreateFrame("ScrollFrame", nil, f, "InputScrollFrameTemplate")
+              scroll:SetPoint("TOPLEFT", 8, -24)
+              scroll:SetPoint("BOTTOMRIGHT", -8, 8)
+              f.edit = scroll.EditBox or scroll:GetScrollChild()
+              if not f.edit then f.edit = CreateFrame("EditBox", nil, scroll); scroll:SetScrollChild(f.edit) end
+              local edit = f.edit
+              edit:SetMultiLine(true)
+              edit:SetMaxLetters(255)
+              edit:SetAutoFocus(false)
+              edit:SetFontObject(ChatFontNormal)
+              edit:SetTextColor(1,1,1,1)
+              edit:SetWidth(scroll:GetWidth()-18)
+              scroll:HookScript("OnSizeChanged", function(_, w) if w and w>20 then edit:SetWidth(w-18) end end)
+              f.counter = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+              f.counter:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -6, 6)
+              f._built = true
+            end
+            f:SetHeight(120)
+            local idx = data.index
+            f.label:SetText("Message "..tostring(idx))
+            local key = "customMessage"..idx
+            local edit = f.edit
+            if not f._hooked then
+              edit:HookScript("OnTextChanged", function(self, user)
+                if user then
+                  local text = self:GetText() or ""
+                  if cfg and cfg.Set then cfg:Set(key, text) end
+                  if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", key, text) end
+                  if (self:GetNumLetters() or (#text)) == 0 then C_Timer.After(0, function() if self:IsVisible() and not self:HasFocus() then self:SetFocus() end end) end
+                end
+                local len = self:GetNumLetters() or (#self:GetText())
+                local pct = len/255
+                local r,g,b = 0.70,0.70,0.70
+                if pct>=0.95 then r,g,b=1,0.15,0.15 elseif pct>=0.85 then r,g,b=1,0.55,0.10 elseif pct>=0.70 then r,g,b=1,0.85,0.10 end
+                f.counter:SetTextColor(r,g,b)
+                f.counter:SetText( (len or 0).."/255" )
+              end)
+              f._hooked = true
+            end
+            if cfg and cfg.Get then
+              local cur = cfg:Get(key, "") or ""
+              if edit:GetText() ~= cur then edit:SetText(cur) end
+            end
+            -- Force counter refresh
+            edit:GetScript("OnTextChanged")(edit, false)
+          end)
+        elseif kind == "toggle" then
+          factory("CheckButton", function(cb, data)
+            if not cb._built then
+              cb.Text = cb.Text or cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+              cb.Text:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+              cb:SetScript("OnClick", function(self)
+                PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
+                local v = self:GetChecked() and true or false
+                if cfg and cfg.Set then cfg:Set(data.key, v) end
+                if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", data.key, v) end
+              end)
+              cb._built = true
+            end
+            cb:SetHeight(24)
+            cb.Text:SetText(data.label or data.key)
+            if cfg and cfg.Get then cb:SetChecked(cfg:Get(data.key, data.default or false) and true or false) end
+          end)
+        elseif kind == "slider" then
+          factory("BackdropTemplate", function(f, data)
+            if not f._built then
+              f.label = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+              f.label:SetPoint("TOPLEFT", 4, -2)
+              f.slider = CreateFrame("Slider", nil, f, "OptionsSliderTemplate")
+              f.slider:SetPoint("TOPLEFT", f.label, "BOTTOMLEFT", 0, -6)
+              f.slider:SetWidth(200)
+              f.valueText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+              f.valueText:SetPoint("LEFT", f.slider, "RIGHT", 10, 0)
+              f._built = true
+            end
+            f:SetHeight(54)
+            f.label:SetText(data.label)
+            local s = f.slider
+            s:SetMinMaxValues(data.min, data.max)
+            s:SetValueStep(data.step or 1)
+            local current = cfg and cfg:Get(data.key, data.default or data.min) or data.min
+            s:SetScript("OnValueChanged", function(_, v)
+              if data.step and data.step>=1 then v = math.floor(v+0.5) end
+              if cfg and cfg.Set then cfg:Set(data.key, v) end
+              if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", data.key, v) end
+              f.valueText:SetText( (data.fmt and data.fmt(v)) or tostring(v) )
+            end)
+            s:SetValue(current)
+            f.valueText:SetText( (data.fmt and data.fmt(current)) or tostring(current) )
+          end)
+        elseif kind == "dropdown" then
+          factory("BackdropTemplate", function(f, data)
+            if not f._built then
+              f.label = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+              f.label:SetPoint("TOPLEFT", 4, -4)
+              f.dd = CreateFrame("Frame", nil, f, "UIDropDownMenuTemplate")
+              f.dd:SetPoint("TOPLEFT", f.label, "BOTTOMLEFT", -16, -2)
+              f._built = true
+            end
+            f:SetHeight(60)
+            f.label:SetText(data.label)
+            local current = cfg and cfg:Get(data.key, data.default) or data.default
+            UIDropDownMenu_Initialize(f.dd, function()
+              for _, item in ipairs(data.entries) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = item.text; info.value = item.value
+                info.checked = (item.value == current)
+                info.func = function()
+                  current = item.value
+                  UIDropDownMenu_SetText(f.dd, item.text)
+                  if cfg and cfg.Set then cfg:Set(data.key, current) end
+                  if bus and bus.Publish then pcall(bus.Publish, bus, "ConfigChanged", data.key, current) end
+                end
+                UIDropDownMenu_AddButton(info)
+              end
+            end)
+            for _, item in ipairs(data.entries) do if item.value==current then UIDropDownMenu_SetText(f.dd, item.text) break end end
+          end)
+        end
+      end)
+
+      ScrollUtil.InitScrollBoxListWithScrollBar(scrollBox, scrollBar, view)
+      local provider = CreateDataProvider()
+
+      provider:Insert({ kind="header", text="Recruitment Messages (Rotation)" })
+      for i=1,3 do provider:Insert({ kind="message", index=i }) end
+      provider:Insert({ kind="spacer", height=14 })
+      provider:Insert({ kind="header", text="Core Options" })
+      provider:Insert({ kind="toggle", key="broadcastEnabled", label="Enable Broadcast Rotation", default=false })
+      provider:Insert({ kind="slider", key="broadcastInterval", label="Base Interval (sec)", min=60, max=900, step=5, default=300, fmt=function(v) return v.."s" end })
+      provider:Insert({ kind="slider", key="jitterPercent", label="Interval Jitter (± %)", min=0, max=50, step=1, default=15, fmt=function(v) return v.."%" end })
+      provider:Insert({ kind="slider", key="inviteClickCooldown", label="Invite Cooldown (sec)", min=0, max=10, step=1, default=3, fmt=function(v) return v.."s" end })
+      provider:Insert({ kind="slider", key="invitePillDuration", label="Invite Status Pill (sec)", min=0, max=10, step=1, default=3, fmt=function(v) return v.."s" end })
+      provider:Insert({ kind="toggle", key="inviteCycleEnabled", label="Cycle Invite Messages", default=true })
+      provider:Insert({ kind="toggle", key="autoBlacklistDeclines", label="Auto-Blacklist Declines", default=true })
+      provider:Insert({ kind="toggle", key="devMode", label="Developer Mode (Debug Tab)", default=false })
+      provider:Insert({ kind="dropdown", key="broadcastChannel", label="Broadcast Channel", default="AUTO", entries={
+        { text="AUTO (Trade > General > Say)", value="AUTO" },
+        { text="SAY", value="SAY" },
+        { text="YELL", value="YELL" },
+        { text="GUILD", value="GUILD" },
+        { text="OFFICER", value="OFFICER" },
+        { text="INSTANCE_CHAT", value="INSTANCE_CHAT" },
+        { text="CHANNEL:Trade", value="CHANNEL:Trade" },
+        { text="CHANNEL:General", value="CHANNEL:General" },
+      } })
+
+      scrollBox:SetDataProvider(provider)
+
+      -- Title (non-virtual) anchored above list using overlay frame.
+      local title = outer:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+      title:SetPoint("TOPLEFT", 16, -16)
+      title:SetText("Settings (Rebuild)")
+      local note = outer:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+      note:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+      note:SetWidth(520)
+      note:SetJustifyH("LEFT")
+      note:SetText("ScrollBox prototype — virtualized settings list.")
+
+      scrollBox:ClearAllPoints()
+      scrollBox:SetPoint("TOPLEFT", note, "BOTTOMLEFT", -8, -12)
+      scrollBox:SetPoint("BOTTOMRIGHT", -8, 8)
+      return outer
+    end)
+    if ok and result then return result end
+  end
+
+  -- Fallback (static) original layout below
   local frame = CreateFrame("Frame", nil, parent)
   frame:SetAllPoints(parent)
+  -- reuse cfg & bus down in static path
+  cfg = cfg or Addon.Config
+  bus = bus or Addon.EventBus
   local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   title:SetPoint("TOPLEFT", 16, -16)
   title:SetText("Settings (Rebuild)")
