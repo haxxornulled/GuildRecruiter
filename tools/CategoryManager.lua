@@ -13,6 +13,7 @@ local initialized = false
 -- Explicit order values ensure deterministic layout (avoid alpha resort)
 local DEFAULT_CATEGORIES = {
   { key = "summary",   label = "Summary",   order = 10 },
+  { key = "roster",    label = "Guild Roster", order = 15 },
   { key = "prospects", label = "Prospects", order = 20 },
   { key = "blacklist", label = "Blacklist", order = 30 },
   { type = "separator",                order = 40 },

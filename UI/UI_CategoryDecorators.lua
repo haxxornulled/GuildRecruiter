@@ -28,6 +28,20 @@ local function FormatSuffix(count)
   return string.format(" |cffffaa33(%d)|r", count)
 end
 
+local function CountGuildOnline()
+  local count = 0
+  pcall(function()
+    if IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo then
+      local n = GetNumGuildMembers() or 0
+      for i=1,n do
+        local r1,r2,r3,r4,r5,r6,r7,r8,r9 = GetGuildRosterInfo(i)
+        if r9 then count = count + 1 end
+      end
+    end
+  end)
+  return count
+end
+
 local attached = false
 local function TryAttach()
   if attached then return true end
@@ -42,6 +56,9 @@ local function TryAttach()
   end)
   pcall(CM.RegisterCategoryDecorator, CM, "blacklist", function()
     return FormatSuffix(CountBlacklist())
+  end)
+  pcall(CM.RegisterCategoryDecorator, CM, "roster", function()
+    return FormatSuffix(CountGuildOnline())
   end)
   attached = true
   return true

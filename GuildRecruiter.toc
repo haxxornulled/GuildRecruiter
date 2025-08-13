@@ -87,6 +87,7 @@ UI/UI_Debug.lua
 UI/UI_LogConsole.lua
 UI/UI_Summary.lua
 UI/UI_Prospects.lua
+UI/UI_GuildRoster.lua
 UI/UI.Blacklist.lua
 UI/UI_Settings.lua
 

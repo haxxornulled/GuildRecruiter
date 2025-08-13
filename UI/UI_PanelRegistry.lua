@@ -72,6 +72,7 @@ end
 
 -- Primary content panels
 register('summary',   'Summary',   'ui/summary',   'UI.Summary')
+register('roster',    'Guild Roster', 'ui/roster',    'UI.GuildRoster')
 register('prospects', 'Prospects', 'ui/prospects', 'UI.Prospects')
 register('blacklist', 'Blacklist', 'ui/blacklist', 'UI.Blacklist')
 register('settings',  'Settings',  'ui/settings',  'UI.Settings')
