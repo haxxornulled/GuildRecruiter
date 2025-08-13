@@ -137,7 +137,16 @@ function M:Show()
   if overlayFrame then overlayFrame:Show() end
 end
 function M:Hide() if overlayFrame then overlayFrame:Hide() end end
-function M:Toggle() if not isBuilt then build() end; if overlayFrame then if overlayFrame:IsShown() then overlayFrame:Hide() else overlayFrame:Show() end end end
+function M:Toggle()
+  if not isBuilt then build() end
+  if overlayFrame then
+    if overlayFrame:IsShown() then
+      self:Hide()
+    else
+      self:Show()
+    end
+  end
+end
 
 if Addon.provide then Addon.provide('UI.ChatOverlay', M, { lifetime = 'SingleInstance', meta = { layer = 'UI', area = 'chat' } }) end
 return M

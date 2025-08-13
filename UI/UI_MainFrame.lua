@@ -848,6 +848,11 @@ function UI:Build()
   ico:SetPoint("CENTER")
   ico:SetSize(24, 24)
       tbtn._icon = ico
+      -- Ensure overlay toggle does not overlap this chat toggle
+      if overlayToggle and overlayToggle.ClearAllPoints then
+        overlayToggle:ClearAllPoints()
+        overlayToggle:SetPoint('LEFT', tbtn, 'RIGHT', 6, 0)
+      end
       local function updateLabel()
         -- Use a clear chat-bubble icon so intent is obvious
         ico:SetTexture("Interface/FriendsFrame/UI-Toast-ChatInviteIcon")
@@ -863,6 +868,11 @@ function UI:Build()
           pcall(function()
             local O = (Addon.Get and Addon.Get('UI.ChatOverlay')) or (Addon.require and Addon.require('UI.ChatOverlay'))
             if O and O.Hide then O:Hide() end
+          end)
+          -- Fallback: hide overlay frame directly if it exists
+          pcall(function()
+            local of = _G and _G['GuildRecruiterChatOverlay']
+            if of and of.Hide then of:Hide() end
           end)
           pcall(function()
             local ChatPanel = Addon.Get and Addon.Get("UI.ChatPanel") or (Addon.require and Addon.require("UI.ChatPanel"))
