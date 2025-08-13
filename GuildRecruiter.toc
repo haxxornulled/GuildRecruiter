@@ -17,6 +17,7 @@ Core/Interfaces/IEventBus.lua
 Core/Interfaces/IScheduler.lua
 Core/Interfaces/IConfiguration.lua
 Core/Interfaces/IProspectManager.lua
+Core/Interfaces/IProspectsReadModel.lua
 Core/Interfaces/IServiceProvider.lua
 Core/Interfaces/ISlashCommandHandler.lua
 Core/Interfaces/IPanelFactory.lua
@@ -77,6 +78,7 @@ Core/DebugCommands.lua
 UI/CompositionRoot.lua
 Init.lua
 UI/UI_ChatPanel.lua
+UI/UI_ChatOverlay.lua
 UI/UI_CategoryDecorators.lua
 UI/Components/DataGrid.lua
 UI/UI_MainFrame.lua

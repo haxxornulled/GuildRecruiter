@@ -248,6 +248,14 @@ function SettingsUI:Create(parent)
   disposeCB:SetPoint("TOPLEFT", devCB, "BOTTOMLEFT", 0, -12)
   disposeCB:SetChecked(Config:Get("disposeContainerOnShutdown", true) and true or false)
 
+  -- Chat overlay: close in combat (right column)
+  local overlayCloseCB = CreateCheck(right, "Close Chat Overlay in combat", function(on)
+    Config:Set("chatOverlayCloseInCombat", on and true or false)
+    if Bus and Bus.Publish then Bus:Publish("ConfigChanged", "chatOverlayCloseInCombat", on and true or false) end
+  end)
+  overlayCloseCB:SetPoint("TOPLEFT", disposeCB, "BOTTOMLEFT", 0, -12)
+  overlayCloseCB:SetChecked(Config:Get("chatOverlayCloseInCombat", true) and true or false)
+
   -- Channel dropdown (right column)
   local chLabel = right:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   chLabel:SetPoint("TOPLEFT", disposeCB, "BOTTOMLEFT", 0, -14); chLabel:SetText("Broadcast Channel")

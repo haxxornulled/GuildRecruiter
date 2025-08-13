@@ -378,7 +378,11 @@ local function CreateRecruiter(scope)
       for _, qg in ipairs(DB.queue) do if qg == guid then return end end
       return requeue(guid)
     end
-    function self:Blacklist(guid, reason) return blacklistGUID(guid, reason) end
+    function self:Blacklist(guid, reason)
+      local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+      if pm and pm.Blacklist then return pm:Blacklist(guid, reason) end
+      return blacklistGUID(guid, reason)
+    end
 
     function self:GetProspect(guid) return DB.prospects[guid] end
     -- Return sorted array of prospect GUID keys (fix: previously returned numeric indices)
@@ -415,6 +419,8 @@ local function CreateRecruiter(scope)
 
     -- Prune helpers (size-based for prospects/blacklist) using List for ordering by lastSeen / timestamp
     function self:PruneProspects(max)
+      local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+      if pm and pm.PruneProspects then return pm:PruneProspects(max) end
       max = tonumber(max); if not max or max < 0 then return 0 end
       local items = {}
       for guid,p in pairs(DB.prospects) do if p and p.lastSeen then items[#items+1] = p end end
@@ -443,6 +449,8 @@ local function CreateRecruiter(scope)
       return removed
     end
     function self:PruneBlacklist(max)
+      local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+      if pm and pm.PruneBlacklist then return pm:PruneBlacklist(max) end
       max = tonumber(max); if not max or max < 0 then return 0 end
       local entries = {}
       for guid,entry in pairs(DB.blacklist) do entries[#entries+1] = { guid=guid, ts = (type(entry)=="table" and entry.timestamp) or 0 } end
@@ -462,8 +470,8 @@ local function CreateRecruiter(scope)
 
     -- === LINQ-powered analytics ===
     function self:GetProspectStats()
-      -- Unified analytics path: Prefer ProspectsDataProvider stats to avoid divergence.
-      local provider = Addon.Get and Addon.Get("ProspectsDataProvider")
+  -- Unified analytics path: resolve the read model interface only.
+  local provider = Addon.Get and Addon.Get('IProspectsReadModel')
       if provider and provider.GetStats then
         local st = provider:GetStats()
         -- Map provider schema to legacy fields used by UI summary (topClasses expected)
@@ -503,6 +511,8 @@ local function CreateRecruiter(scope)
     end
     
     function self:GetBlacklist()
+      local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+      if pm and pm.GetBlacklist then return pm:GetBlacklist() end
       return DB.blacklist or {}
     end
 
@@ -516,6 +526,8 @@ local function CreateRecruiter(scope)
     end
 
     function self:Unblacklist(guid)
+      local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+      if pm and pm.Unblacklist then return pm:Unblacklist(guid) end
       if not guid then return end
       if DB.blacklist then DB.blacklist[guid] = nil end
       

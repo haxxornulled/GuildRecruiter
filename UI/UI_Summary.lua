@@ -10,7 +10,7 @@ local function getProspectManager()
   return (Addon.Get and Addon.Get('IProspectManager')) or safeRequire('IProspectManager')
 end
 local function getProvider()
-  return (Addon.Get and Addon.Get('ProspectsDataProvider')) or safeRequire('ProspectsDataProvider')
+  return (Addon.Get and Addon.Get('IProspectsReadModel')) or safeRequire('IProspectsReadModel')
 end
 
 function M:Create(parent)

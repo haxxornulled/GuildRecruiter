@@ -101,3 +101,6 @@ Exposed via both short and namespaced keys; also assigned on `Addon.*` for conve
 
 ## Interface notes
 - `Core/Interfaces/*.lua` are documentation stubs to describe contracts used by application services. Implementations live under `Infrastructure/*` and register their concrete types into DI with the interface’s well-known key (e.g., `ProspectRepository`).
+
+## User commands
+See `Docs/SlashCommands.md` for all `/gr` aliases and usage.

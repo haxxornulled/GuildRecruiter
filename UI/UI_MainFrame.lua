@@ -36,6 +36,7 @@ local Queue        = (Addon.Peek and Addon.Peek("Collections.Queue")) or nil
 local STYLE = { PAD = 12, GAP = 8, ROW_H = 24, COLORS = { SUBTLN = {1,1,1,0.07} } }
 local TOAST = { FADE_IN = 0.18, FADE_OUT = 0.25, MAX = 5 }
 local SIDEBAR = { WIDTH = 140, SLIDE_DUR = 0.22 }
+local COLLAPSED = { WIDTH = 40, ICON = 28, GAP = 6 }
 
 -- Config helper (UI-only write of layout persistence keys)
 local function CFG()
@@ -84,8 +85,11 @@ local mainFrame, sidebar, contentParent = nil, nil, nil
 local sidebarToggle -- toggle button
 local sidebarCollapsed = false
 local sidebarWidth = SIDEBAR.WIDTH
+local sidebarHoverExpanded = false
+local collapsedBar -- icon-only bar shown when sidebar is collapsed
 local chatMiniCollapsed = false
 local chatPanel -- holds { Frame, Feed, Input }
+local overlayToggle
 
 -- Rebuild wrapper hooking into SidePanel
 local function RebuildSidebar()
@@ -99,6 +103,8 @@ local function RebuildSidebar()
     if CM:EvaluateVisibility(c) then filtered[#filtered+1] = c end
   end
   sidebar:Rebuild(filtered)
+  -- Keep collapsed icon bar in sync with categories
+  if UI._RebuildCollapsedBar then pcall(UI._RebuildCollapsedBar) end
   -- Determine which filtered index corresponds to the raw selected index/key
   local rawSel = CM:GetSelectedIndex() or 1
   local targetKey = raw[rawSel] and raw[rawSel].key
@@ -385,6 +391,16 @@ function UI:Build()
     mainFrame._GR_Glass = bg; mainFrame._GR_Border = border
   end
 
+  -- Standard close button (top-right)
+  if not mainFrame._closeBtn then
+    local closeBtn = CreateFrame("Button", nil, mainFrame, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -6, -6)
+    closeBtn:SetScript("OnClick", function()
+      UI:Hide()
+    end)
+    mainFrame._closeBtn = closeBtn
+  end
+
   -- Acquire or create portrait texture (retail template usually provides one)
   local portrait = mainFrame.portrait or mainFrame.Portrait or (mainFrame.PortraitContainer and mainFrame.PortraitContainer.portrait)
   if not portrait then
@@ -436,6 +452,126 @@ function UI:Build()
     sidebar._GR_Glass = glass
   end
   catButtons = sidebarButtons
+
+  -- Build collapsed icon strip (inside the sidebar frame)
+  local function GetIconForCategory(key)
+    -- Prefer HUD atlases when available; fallback to generic icons
+    -- Keep it resilient: some atlases may not exist on all clients
+    local atlasByKey = {
+      summary   = "poi-town",           -- map town dot
+      prospects = "communities-icon-chat", -- chat bubble
+      blacklist = "transmog-icon-hidden",
+      settings  = "Garr_InfoIcon-Options",
+      debug     = "GarrMission_MissionIcon-Combat",
+    }
+    local textureByKey = {
+      summary   = "Interface/Buttons/UI-MicroButton-Abilities-Up",
+      prospects = "Interface/FriendsFrame/UI-Toast-ChatInviteIcon",
+      blacklist = "Interface/Buttons/UI-GroupLoot-Pass-Up",
+      settings  = "Interface/Buttons/UI-OptionsButton",
+      debug     = "Interface/Buttons/UI-GroupLoot-Dice-Up",
+    }
+    local atlas = atlasByKey[key]
+    local tex = textureByKey[key] or textureByKey.summary
+    return atlas, tex
+  end
+
+  local function BuildCollapsedBar()
+    if collapsedBar and collapsedBar._builtForTick == (GetTime and GetTime() or 0) then return end
+    if not collapsedBar then
+      collapsedBar = CreateFrame("Frame", nil, sidebar)
+      collapsedBar:SetPoint("TOPLEFT", 0, 0)
+      collapsedBar:SetPoint("BOTTOMLEFT", 0, 0)
+      collapsedBar:SetWidth(COLLAPSED.WIDTH)
+      -- darken a touch when collapsed
+      local bg = collapsedBar:CreateTexture(nil, "BACKGROUND", nil, -3)
+      bg:SetAllPoints(); bg:SetColorTexture(0,0,0,0.18)
+      -- Hover handlers to expand while hovering
+      collapsedBar:SetScript("OnEnter", function()
+        if sidebarCollapsed and not sidebarHoverExpanded then
+          sidebarHoverExpanded = true
+          if UIHelpers and UIHelpers.SlideWidth then
+            UIHelpers.SlideWidth(sidebar, sidebar:GetWidth(), sidebarWidth, SIDEBAR.SLIDE_DUR, nil, function() end)
+            if UIHelpers.Fade then UIHelpers.Fade(sidebar, 1.0, 0.10) end
+          else
+            sidebar:SetWidth(sidebarWidth)
+          end
+          if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(true) end
+        end
+      end)
+      local function maybeReCollapse()
+        -- If user hasn't explicitly expanded (locked open) and we expanded via hover, collapse back
+        local SV = Addon.Get and Addon.Get("SavedVarsService")
+        local baseCollapsed = (SV and SV.Get and SV:Get("ui","sidebarCollapsed", false)) or false
+        local overSide = sidebar and sidebar.IsMouseOver and sidebar:IsMouseOver()
+        local overBar  = collapsedBar and collapsedBar.IsMouseOver and collapsedBar:IsMouseOver()
+        if baseCollapsed and sidebarHoverExpanded and (not overSide) and (not overBar) then
+          -- collapse
+          if UIHelpers and UIHelpers.SlideWidth then
+            UIHelpers.SlideWidth(sidebar, sidebar:GetWidth(), COLLAPSED.WIDTH, SIDEBAR.SLIDE_DUR, nil, function() sidebarHoverExpanded=false end)
+            if UIHelpers.Fade then UIHelpers.Fade(sidebar, 0.35, 0.12) end
+          else
+            sidebar:SetWidth(COLLAPSED.WIDTH); sidebarHoverExpanded=false
+          end
+          if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(false) end
+        end
+      end
+      collapsedBar:SetScript("OnLeave", function() C_Timer.After(0.08, maybeReCollapse) end)
+      -- Also watch the main sidebar OnLeave to collapse after hover
+      if sidebar and sidebar.HookScript then
+        sidebar:HookScript("OnLeave", function() C_Timer.After(0.08, maybeReCollapse) end)
+      end
+      collapsedBar._icons = {}
+    end
+  -- Clear previous icons
+  for _, b in ipairs(collapsedBar._icons) do if b and b.Hide then b:Hide() end end
+  if type(wipe) == 'function' then wipe(collapsedBar._icons) else for i=#collapsedBar._icons,1,-1 do collapsedBar._icons[i]=nil end end
+    -- Build from visible categories (skip separators)
+    local list = GetCategories()
+    local y = -42 -- match top padding similar to full sidebar
+    for _, cat in ipairs(list) do
+      if cat.type ~= "separator" then
+        local btn = CreateFrame("Button", nil, collapsedBar)
+        btn:SetSize(COLLAPSED.ICON, COLLAPSED.ICON)
+        btn:SetPoint("TOPLEFT", 6, y)
+        local tex = btn:CreateTexture(nil, "ARTWORK")
+        tex:SetPoint("CENTER")
+        tex:SetSize(COLLAPSED.ICON, COLLAPSED.ICON)
+        local atlas, fallback = GetIconForCategory(cat.key)
+        local ok = false
+        if tex.SetAtlas and atlas then ok = tex:SetAtlas(atlas) or false end
+        if not ok then tex:SetTexture(fallback) end
+        btn:SetScript("OnClick", function()
+          -- Selecting a category should also lock open (expand) if base-collapsed
+          UI:SelectCategoryByKey(cat.key)
+          local SV = Addon.Get and Addon.Get("SavedVarsService")
+          local baseCollapsed = (SV and SV.Get and SV:Get("ui","sidebarCollapsed", false)) or false
+          if baseCollapsed then
+            -- temporarily show the panel, but do not change base setting; user can click toggle to lock
+            sidebarHoverExpanded = true
+            if UIHelpers and UIHelpers.SlideWidth then
+              UIHelpers.SlideWidth(sidebar, sidebar:GetWidth(), sidebarWidth, SIDEBAR.SLIDE_DUR)
+              if UIHelpers.Fade then UIHelpers.Fade(sidebar, 1.0, 0.10) end
+            else
+              sidebar:SetWidth(sidebarWidth)
+            end
+            if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(true) end
+          end
+        end)
+        btn:SetScript("OnEnter", function()
+          GameTooltip:SetOwner(btn, "ANCHOR_RIGHT"); GameTooltip:ClearLines();
+          GameTooltip:AddLine(cat.label or cat.key, 1,1,1); if cat.description then GameTooltip:AddLine(cat.description, 0.8,0.8,0.8, true) end; GameTooltip:Show()
+        end)
+        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        table.insert(collapsedBar._icons, btn)
+        y = y - (COLLAPSED.ICON + COLLAPSED.GAP)
+      end
+    end
+    collapsedBar:Hide() -- default hidden until collapsed
+  end
+
+  BuildCollapsedBar()
+  UI._RebuildCollapsedBar = BuildCollapsedBar
 
   -- Content
   contentParent = CreateFrame("Frame", nil, mainFrame)
@@ -509,25 +645,47 @@ function UI:Build()
     local function updateLabel()
       setArrow(not sidebarCollapsed)
     end
-    btn:SetScript("OnClick", function()
-      if not UIHelpers or not UIHelpers.SlideWidth then
-        -- Fallback: hard toggle
-        if sidebarCollapsed then sidebar:SetWidth(sidebarWidth) else sidebar:SetWidth(1) end
-        sidebarCollapsed = not sidebarCollapsed
+    local function applyCollapsed(collapsed, animated)
+      local targetW = collapsed and COLLAPSED.WIDTH or sidebarWidth
+      local fromW = sidebar:GetWidth() or targetW
+      local finish = function()
+        sidebarCollapsed = collapsed
+        if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(not collapsed) end
+        if collapsedBar then collapsedBar:SetShown(collapsed) end
         updateLabel()
-        return
+        -- persist
+        local S = (Addon.Get and Addon.Get("SavedVarsService")) or (Addon.require and Addon.require("SavedVarsService"))
+        if S and S.Set then S:Set("ui","sidebarCollapsed", collapsed); if S.Sync then S:Sync() end end
       end
-      if sidebarCollapsed then
-        UIHelpers.SlideWidth(sidebar,  sidebar:GetWidth(), sidebarWidth, SIDEBAR.SLIDE_DUR, nil, function() sidebarCollapsed=false; updateLabel() end)
-        -- gentle emphasis
-        if UIHelpers.Fade then UIHelpers.Fade(sidebar, 1, 0.12) end
+      if animated and UIHelpers and UIHelpers.SlideWidth then
+        UIHelpers.SlideWidth(sidebar, fromW, targetW, SIDEBAR.SLIDE_DUR, nil, finish)
+        if UIHelpers.Fade then UIHelpers.Fade(sidebar, collapsed and 0.35 or 1.0, 0.12) end
       else
-        UIHelpers.SlideWidth(sidebar, sidebar:GetWidth(), 1, SIDEBAR.SLIDE_DUR, nil, function() sidebarCollapsed=true; updateLabel() end)
-        if UIHelpers.Fade then UIHelpers.Fade(sidebar, 0.35, 0.12) end
+        sidebar:SetWidth(targetW); finish()
       end
+    end
+    btn:SetScript("OnClick", function()
+      applyCollapsed(not sidebarCollapsed, true)
     end)
     updateLabel()
     sidebarToggle = btn
+  end
+
+  -- Overlay chat toggle button (header area)
+  if not overlayToggle then
+    local btn = CreateFrame('Button', nil, mainFrame)
+    btn:SetSize(28, 28)
+    btn:SetPoint('TOPLEFT', sidebarToggle, 'TOPRIGHT', 6, 6)
+    if btn.SetNormalTexture then btn:SetNormalTexture('') end
+    if btn.SetHighlightTexture then btn:SetHighlightTexture('') end
+    local ico = btn:CreateTexture(nil, 'ARTWORK')
+    ico:SetPoint('CENTER'); ico:SetSize(20, 20)
+    ico:SetTexture('Interface/FriendsFrame/UI-Toast-ChatInviteIcon')
+    btn:SetScript('OnClick', function()
+      local O = (Addon.Get and Addon.Get('UI.ChatOverlay')) or (Addon.require and Addon.require('UI.ChatOverlay'))
+      if O and O.Toggle then O:Toggle() end
+    end)
+    overlayToggle = btn
   end
 
   -- Resize handle (bottom-right) with persistence
@@ -607,10 +765,34 @@ function UI:Build()
       end)
     end
   end
+
+  -- Apply persisted sidebar collapsed state (after building components)
+  do
+    local S = (Addon.Get and Addon.Get("SavedVarsService")) or (Addon.require and Addon.require("SavedVarsService"))
+    local collapsed = (S and S.Get and S:Get("ui","sidebarCollapsed", false)) or false
+    local function applyBoot(coll)
+      sidebarCollapsed = not not coll
+      if sidebarCollapsed then
+        sidebar:SetWidth(COLLAPSED.WIDTH)
+        if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(false) end
+        if collapsedBar then collapsedBar:Show() end
+      else
+        sidebar:SetWidth(sidebarWidth)
+        if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(true) end
+        if collapsedBar then collapsedBar:Hide() end
+      end
+    end
+    applyBoot(collapsed)
+  end
 end
 
 function UI:Show()
   if InCombatLockdown and InCombatLockdown() then print("|cffff5555[GuildRecruiter]|r Cannot open UI in combat."); return end
+  -- Ensure chat overlay is not visible when main UI is shown
+  pcall(function()
+    local O = (Addon.Get and Addon.Get('UI.ChatOverlay')) or (Addon.require and Addon.require('UI.ChatOverlay'))
+    if O and O.Hide then O:Hide() end
+  end)
   if not mainFrame then UI:Build() end
   if mainFrame ~= nil then mainFrame:Show() end
 end

@@ -643,10 +643,12 @@ do
           local recruiter = Addon.require and Addon.require("Recruiter")
           if not recruiter then println("Recruiter service unavailable") return end
           if target == "prospects" and recruiter.PruneProspects then
-            local removed = recruiter:PruneProspects(max)
+            local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+            local removed = pm and pm.PruneProspects and pm:PruneProspects(max) or 0
             println("Pruned prospects removed="..removed)
           elseif target == "blacklist" and recruiter.PruneBlacklist then
-            local removed = recruiter:PruneBlacklist(max)
+            local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+            local removed = pm and pm.PruneBlacklist and pm:PruneBlacklist(max) or 0
             println("Pruned blacklist removed="..removed)
           else
             println("Invalid target (use prospects|blacklist)")
@@ -663,7 +665,8 @@ do
             for _,pg in ipairs(recruiter:GetAllGuids() or {}) do local p = recruiter:GetProspect(pg); if p and p.name and p.name:lower()==who:lower() then guidMatch=pg break end end
           end
           if guidMatch then
-            recruiter:Blacklist(guidMatch, "decline-test")
+            local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+            if pm and pm.Blacklist then pm:Blacklist(guidMatch, "decline-test") end
             local bus = Addon.require and Addon.require("EventBus")
             if bus and bus.Publish then bus:Publish("InviteService.InviteDeclined", guidMatch, who) end
             println("Simulated decline for "..who)

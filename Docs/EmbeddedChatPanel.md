@@ -1,6 +1,6 @@
 # Embedded Chat Panel (Design Note)
 
-Status: Draft
+Status: MVP implemented (dockable mini with toggle); further enhancements planned
 Owner: UI/Presentation; Infrastructure (ChatRouting) for adapters
 Updated: 2025-08-12
 
@@ -18,7 +18,7 @@ Non-goals
 
 ## UX Concepts
 - Docked panel: Right or bottom dock in `UI_MainFrame` with collapse/expand and adjustable height.
-- Ever-present mini-view: A thin bar or small floating frame that shows the latest N messages; expands on hover or focus.
+- Ever-present mini-view: A thin bar or small floating frame that shows the latest N messages; expands on focus.
 - Contextual reply: Clicking a whisper populates the input with `/w <name>`; Enter sends and keeps focus inside the addon.
 - Filters: Toggle chips for GUILD / WHISPER / SYSTEM; persisted via SavedVars.
 
@@ -58,10 +58,14 @@ Data shape (message)
 - Locales and escape codes: strip/escape WoW color codes when needed.
 
 ## Minimal Milestone (MVP)
-1. Infra: ChatRouting that normalizes events and provides Send.
-2. App: ChatFeed that manages subscribers and filter logic.
-3. UI: Chat panel docked in main frame with feed + input; filter chips and collapse.
-4. Persistence: Save filters and collapsed state.
+Delivered:
+1. Infra: `Infrastructure/Chat/ChatRouting.lua` normalizes events and provides Send.
+2. UI: Chat mini dock embedded in `UI_MainFrame` with collapse/expand toggle.
+3. Persistence: Collapsed state is saved; toggle icon reflects state.
+
+Planned next (post-MVP):
+- Application-level `ChatFeed` to manage filters and subscribers.
+- Inline filter chips and input for quick replies.
 
 ## Future
 - Mention templates for quick canned responses.
@@ -88,10 +92,14 @@ Data shape (message)
 - Provide a mini dropdown/button next to the input that inserts the selected template into the EditBox.
 - Acceptance: Selecting a template inserts text at cursor; persists across sessions.
 
-4) Mini-view toggle placement
-- Optionally move the mini-view (chat) toggle near the sidebar chevron for a unified control area.
-- Keep bottom-right toggle as a fallback when theme modules are absent.
-- Acceptance: Toggle works in either placement; state persists in `ui.chatMiniCollapsed`.
+4) Mini-view toggle placement and icon semantics
+- Current: A chat-bubble icon toggles the mini chat dock. When collapsed, the icon is desaturated and semi-transparent.
+- Possible: Move the toggle near the sidebar chevron for a unified control area.
+- Acceptance: Toggle works reliably; state persists in `ui.chatMiniCollapsed`.
 
 ## Notes on "Cloning" ChatFrame
 While you can parent a new `ScrollingMessageFrame` and copy font/colors from ChatFrame1, avoid cloning secure/protected Blizzard UI templates or reusing their exact named frames. Build a parallel, lightweight frame tree that mimics the behavior we need. This sidesteps taint and template restrictions.
+
+References:
+- Toggle/icon behavior implemented in `UI/UI_MainFrame.lua`.
+- Event normalization in `Infrastructure/Chat/ChatRouting.lua`.

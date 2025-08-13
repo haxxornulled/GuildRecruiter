@@ -37,7 +37,15 @@ Migration Path:
 
 This document will evolve as refactor progresses.
 
-See also: docs/EmbeddedChatPanel.md for the embedded chat panel concept and architecture sketch.
+See also: Docs/EmbeddedChatPanel.md for the embedded chat panel concept and architecture sketch; Docs/SlashCommands.md for user-facing command usage.
+
+## 2025-08 Update Highlights
+
+- Introduced `IPanelFactory` contract (Core/Interfaces) and default implementation (`Infrastructure/UI/PanelFactory.lua`). UI panels are now registered centrally (`UI/UI_PanelRegistry.lua`) and created lazily on demand by `UI_MainFrame`.
+- Moved `ProspectsManager` to `Infrastructure/Services` and export it as `IProspectManager` for consumers; UI should prefer the interface alias.
+- Consolidated interface stubs under `Core/Interfaces` (keys are provided for DI inspection); see `Docs/Interfaces.md`.
+- Fixed DI diagnostics by building the container post-registrations in bootstrap, so `/gr diag` shows accurate counts.
+- UI refinements: sidebar icons have no hover effects; the chat mini toggle uses a chat-bubble icon whose desaturation/alpha reflects collapsed state.
 
 ## OOP + DI (Constructor Injection)
 

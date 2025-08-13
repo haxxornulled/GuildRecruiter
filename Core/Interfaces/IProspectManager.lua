@@ -13,7 +13,7 @@ if type(Interface) ~= 'function' then
 end
 
 local IProspectManager = Interface('IProspectManager', {
-  'GetProspect','GetAll','GetAllGuids','RemoveProspect','Clear','Blacklist','Unblacklist','IsBlacklisted','GetBlacklist','PruneProspects','PruneBlacklist',
+  'GetProspect','GetAll','GetAllGuids','RemoveProspect','Clear','Blacklist','Unblacklist','IsBlacklisted','GetBlacklist','PruneProspects','PruneBlacklist','InviteProspect',
 })
 
 if Addon and Addon.provide then

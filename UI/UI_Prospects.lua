@@ -5,7 +5,9 @@ if type(AddonName) ~= 'string' or AddonName == '' then AddonName = 'GuildRecruit
 local M = {}
 
 -- Dependency shortcuts (resolved lazily for safety)
-local function getProvider() return Addon.Get and Addon.Get("ProspectsDataProvider") end
+local function getProvider()
+  if Addon.Get then return Addon.Get("IProspectsReadModel") end
+end
 local function getProspectManager()
   -- Prefer interface abstraction; fall back to legacy Recruiter for backward compat
   local m = Addon.Get and Addon.Get('IProspectManager')
@@ -290,7 +292,7 @@ function M:Create(parent)
         btn:Show(); idx=idx+1; return btn
       end
       make('I',0.3,1,0.3,function(r)
-        local inv=Addon.Get and Addon.Get('InviteService'); if inv and inv.InviteProspect and r.guid then inv:InviteProspect(r.guid) end
+        local pm=getProspectManager(); if pm and pm.InviteProspect and r.guid then pm:InviteProspect(r.guid) end
       end,'Invite')
       if rec.status=='Blacklisted' then
         make('U',0.3,0.3,1,function(r) local pm=getProspectManager(); if pm and pm.Unblacklist and r.guid then pm:Unblacklist(r.guid) end end,'Unblacklist')
@@ -410,10 +412,10 @@ function M:Create(parent)
   -- Bulk button handlers (after UpdateStatus defined)
   inviteBtn:SetScript('OnClick', function()
     local selection = grid:GetSelection()
-    local invite = Addon.Get and Addon.Get('InviteService')
-    if invite and invite.InviteProspect then
+    local pm = getProspectManager()
+    if pm and pm.InviteProspect then
       for _,rec in ipairs(grid.data) do
-        if rec.guid and selection[rec.guid] then invite:InviteProspect(rec.guid) end
+        if rec.guid and selection[rec.guid] then pm:InviteProspect(rec.guid) end
       end
     end
     grid:ClearSelection(); frame:UpdateStatus()
@@ -431,7 +433,7 @@ function M:Create(parent)
 
   -- Skip auto-reset of filter to 'all' to reduce analyzer noise and keep user intent
   function frame:RefreshData()
-    local provider = getProvider() or (Addon.require and Addon.require("ProspectsDataProvider"))
+    local provider = getProvider()
     if not provider or not grid then return end
     local list = (provider.GetAll and provider:GetAll()) or {}
     grid:SetData(list)

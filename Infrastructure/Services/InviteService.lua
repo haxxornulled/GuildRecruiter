@@ -127,7 +127,15 @@ local function CreateInviteService(scope)
   local function getBus() return (scope and scope.Resolve and scope:Resolve("EventBus") or Addon.Get("EventBus")) end
   local function getScheduler() return (scope and scope.Resolve and scope:Resolve("Scheduler") or Addon.Get("Scheduler")) end
   local function getConfig() return (scope and scope.Resolve and scope:Resolve("IConfiguration") or Addon.Get("IConfiguration")) end
-  local function getRecruiter() return (scope and scope.Resolve and scope:Resolve("Recruiter") or Addon.Get("Recruiter")) end
+  local function getRecruiter() return (scope and scope.Resolve and scope:Resolve("Recruiter") or Addon.Get("Recruiter")) end -- legacy
+  local function getProvider()
+    if scope and scope.Resolve then
+      local ok, p = pcall(function() return scope:Resolve('IProspectsReadModel') end)
+      if ok and p then return p end
+    end
+    if Addon.Get then return Addon.Get('IProspectsReadModel') end
+  end
+  local function getPM() return (scope and scope.Resolve and scope:Resolve("IProspectManager")) or (Addon.Get and Addon.Get("IProspectManager")) end
 
   local self = {}
   local running = false
@@ -219,28 +227,26 @@ local function CreateInviteService(scope)
     if not who and msg:lower():find("declin") and msg:lower():find("guild invitation") then
       who = msg:match("^([^%s]+)")
     end
-    if not who then return end
+  if not who then return end
     local nameOnly = who:match("^([^%-]+)") or who
     local rec = recentInvites[nameOnly:lower()]
     local guid = rec and rec.guid
     -- Fallback: attempt to find prospect by name if guid missing (invite by name)
     if not guid then
-      local recruiter = getRecruiter()
-      if recruiter and recruiter.GetAllGuids and recruiter.GetProspect then
-        for _,pguid in ipairs(recruiter:GetAllGuids() or {}) do
-          local p = recruiter:GetProspect(pguid)
-          if p and p.name and p.name:lower() == nameOnly:lower() then guid = pguid break end
-        end
+      local prov = getProvider()
+      if prov and prov.GetAll then
+        local all = prov:GetAll() or {}
+        for i=1,#all do local p = all[i]; if p and p.name and p.name:lower() == nameOnly:lower() then guid = p.guid; break end end
       end
     end
     if guid then
       cleanupInvites()
-      local recruiter = getRecruiter()
       local cfg = getConfig()
       local autoBL = true
       pcall(function() autoBL = cfg:Get("autoBlacklistDeclines", true) end)
-      if recruiter and recruiter.Blacklist and autoBL then
-        recruiter:Blacklist(guid, "declined")
+      if autoBL then
+        local pm = getPM()
+        if pm and pm.Blacklist then pcall(function() pm:Blacklist(guid, "declined") end) end
         getBus():Publish("InviteService.InviteDeclined", guid, who)
         getLog():Info("Guild invite declined by {Player}; auto-blacklisted guid={GUID}", { Player = who, GUID = guid })
       else
@@ -382,7 +388,7 @@ local function CreateInviteService(scope)
   -- Invite a prospect by GUID (emits rich events)
   function self:InviteGUID(guid, opts)
     opts = opts or {}
-    local p = getRecruiter():GetProspect(guid)
+  local prov = getProvider(); local p = prov and prov.GetByGuid and prov:GetByGuid(guid) or nil
     if not p then return false, "no-prospect" end
     local target = fmtNameRealm(p.name, p.realm)
     if not target then return false, "bad-name" end

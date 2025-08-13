@@ -21,8 +21,11 @@ end
 -- Dependencies via container
 local function UI() return Addon.UI or (Addon.require and Addon.require("UI.Main")) end
 local function CFG() return (Addon.require and Addon.require("IConfiguration")) or (Addon.Get and Addon.Get("IConfiguration")) end
-local function Provider() return Addon.Get and Addon.Get("ProspectsDataProvider") end
+local function Provider()
+  if Addon.Get then return Addon.Get("IProspectsReadModel") end
+end
 local function Recruiter() return Addon.Get and Addon.Get("Recruiter") end
+local function ProspectManager() return (Addon.Get and (Addon.Get('IProspectManager') or Addon.Get('ProspectsManager'))) end
 
 function Handler.new()
   return setmetatable({}, Handler)
@@ -105,9 +108,9 @@ function Handler:Handle(msg)
     return
   elseif msg:match("^prune") then
     local parts = Args(msg); local which = parts[2]; local limit = tonumber(parts[3]) or 0
-    local rec = Recruiter(); if not rec then printf("Recruiter not ready"); return end
-    if which == "prospects" then local removed = rec:PruneProspects(limit); printf("Pruned prospects removed="..removed.." kept="..limit)
-    elseif which == "blacklist" then local removed = rec:PruneBlacklist(limit); printf("Pruned blacklist removed="..removed.." kept="..limit)
+  local pm = ProspectManager(); if not pm then printf("ProspectManager not ready"); return end
+  if which == "prospects" then local removed = pm:PruneProspects(limit); printf("Pruned prospects removed="..removed.." kept="..limit)
+  elseif which == "blacklist" then local removed = pm:PruneBlacklist(limit); printf("Pruned blacklist removed="..removed.." kept="..limit)
     else printf("Usage: /gr prune prospects <N> | blacklist <N>") end
     return
   elseif msg == "queue fix" or msg == "queue dedupe" then
@@ -119,11 +122,11 @@ function Handler:Handle(msg)
     printf("Queue deduped: before="..before.." after="..after..(ok and "" or (" error="..tostring(err))))
     return
   elseif msg == "stats" then
-    local provider = Provider(); local rec = Recruiter()
-    if provider and provider.GetStats and rec then
-      local st = provider:GetStats() or {}; local blCount = 0; local bl = rec:GetBlacklist(); for _ in pairs(bl or {}) do blCount=blCount+1 end
+    local provider = Provider(); local pm = ProspectManager(); local rec = Recruiter()
+    if provider and provider.GetStats and pm and rec then
+      local st = provider:GetStats() or {}; local blCount = 0; local bl = pm:GetBlacklist(); for _ in pairs(bl or {}) do blCount=blCount+1 end
       printf(string.format("Prospects=%d Active=%d Blacklist=%d Queue=%d AvgLevel=%.1f", st.total or 0, (st.active and st.active.total) or (st.total or 0), blCount, #rec:GetQueue(), st.avgLevel or 0))
-    else printf("Stats unavailable (provider or recruiter not ready)") end
+    else printf("Stats unavailable (provider or manager not ready)") end
     return
   elseif msg == "diag layers" or msg == "diag" then
     local AddonNs = Addon

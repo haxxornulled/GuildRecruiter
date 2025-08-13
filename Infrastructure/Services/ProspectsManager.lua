@@ -1,74 +1,82 @@
 local ADDON_NAME, Addon = ...
 
--- ProspectsManager: wraps ProspectsService and exposes IProspectManager
--- Layer: Infrastructure (controller/service wrapper around underlying service)
-local function CreateProspectsManager(scope)
-    local svc = scope:Resolve("ProspectsService")
-    local logger = scope:Resolve("Logger"):ForContext("Subsystem","ProspectsManager")
-    local bus = scope:Resolve("EventBus")
-
-    local self = {}
-
-    local function publish(action, guid)
-        local ok, err = pcall(bus.Publish, bus, "ProspectsManager.Event", action, guid)
-        if not ok then logger:Error("Bus publish failed {Err}", { Err = err }) end
-    end
-
-    -- Interface methods
-    function self:GetProspect(guid) return svc:GetProspect(guid) end
-    function self:GetAll() return svc:GetAll() end
-    function self:GetAllGuids() return svc:GetAllGuids() end
-
-    function self:RemoveProspect(guid)
-        svc:RemoveProspect(guid); publish('removed', guid)
-    end
-
-    function self:Clear()
-        local removed = 0
-        for _, g in ipairs(svc:GetAllGuids() or {}) do svc:RemoveProspect(g); removed = removed + 1 end
-        publish('cleared', removed)
-        logger:Info("Cleared {Count} prospects", { Count = removed })
-        return removed
-    end
-
-    function self:Blacklist(guid, reason)
-        svc:Blacklist(guid, reason); publish('blacklisted', guid)
-    end
-
-    function self:Unblacklist(guid)
-        svc:Unblacklist(guid); publish('unblacklisted', guid)
-    end
-
-    function self:IsBlacklisted(guid) return svc:IsBlacklisted(guid) end
-    function self:GetBlacklist() return svc:GetBlacklist() end
-
-    function self:PruneProspects(max)
-        local removed = svc:PruneProspects(max); publish('pruned-prospects', removed); return removed
-    end
-
-    function self:PruneBlacklist(maxKeep)
-        local removed = svc:PruneBlacklist(maxKeep); publish('pruned-blacklist', removed); return removed
-    end
-
-    -- Mark interface implementation for validation
-    self.__implements = self.__implements or {}
-    self.__implements['IProspectManager'] = true
-
-    return self
+-- ProspectsManager as Class with constructor injection
+local Class = (Addon and Addon.Class) or function(_,def)
+    return setmetatable(def or {}, { __call = function(c, ...) local o=setmetatable({}, { __index = c }); if o.init then o:init(...) end; return o end })
 end
 
--- Register controller
-if Addon.provide then
-    if not (Addon.IsProvided and Addon.IsProvided("ProspectsManager")) then
-        Addon.provide("ProspectsManager", function(scope) return CreateProspectsManager(scope) end, { lifetime = "SingleInstance", meta = { layer = 'Infrastructure', role = "controller", area = "prospects" } })
-    end
-    -- Provide interface alias
-    if Addon.safeProvide and not (Addon.IsProvided and Addon.IsProvided('IProspectManager')) then
-        Addon.safeProvide('IProspectManager', function(sc) return sc:Resolve('ProspectsManager') end, { lifetime = 'SingleInstance' })
+local ProspectsManager = Class('ProspectsManager', {
+    __deps = { 'ProspectsService', 'Logger', 'EventBus', 'InviteService', 'IProspectsReadModel' },
+    __implements = { 'IProspectManager' },
+})
+
+function ProspectsManager:init(svc, logger, bus, invite, provider)
+    self._svc = svc
+    self._bus = bus
+    self._logger = (logger and logger.ForContext and logger:ForContext('Subsystem','ProspectsManager')) or logger or { Info=function() end, Error=function() end }
+    self._invite = invite
+    self._provider = provider -- read-side collaborator (optional usage)
+end
+
+local function publish(self, action, guid)
+    local bus = self._bus
+    if not bus or not bus.Publish then return end
+    local ok, err = pcall(bus.Publish, bus, 'ProspectsManager.Event', action, guid)
+    if not ok then local l=self._logger; if l and l.Error then l:Error('Bus publish failed {Err}', { Err = err }) end end
+end
+
+function ProspectsManager:GetProspect(guid) return self._svc:GetProspect(guid) end
+function ProspectsManager:GetAll() return self._svc:GetAll() end
+function ProspectsManager:GetAllGuids() return self._svc:GetAllGuids() end
+
+function ProspectsManager:RemoveProspect(guid)
+    self._svc:RemoveProspect(guid); publish(self,'removed', guid)
+end
+
+function ProspectsManager:Clear()
+    local removed = 0
+    for _, g in ipairs(self._svc:GetAllGuids() or {}) do self._svc:RemoveProspect(g); removed = removed + 1 end
+    publish(self,'cleared', removed)
+    local l=self._logger; if l and l.Info then l:Info('Cleared {Count} prospects', { Count = removed }) end
+    return removed
+end
+
+function ProspectsManager:Blacklist(guid, reason)
+    self._svc:Blacklist(guid, reason); publish(self,'blacklisted', guid)
+end
+
+function ProspectsManager:Unblacklist(guid)
+    self._svc:Unblacklist(guid); publish(self,'unblacklisted', guid)
+end
+
+function ProspectsManager:IsBlacklisted(guid) return self._svc:IsBlacklisted(guid) end
+function ProspectsManager:GetBlacklist() return self._svc:GetBlacklist() end
+
+function ProspectsManager:PruneProspects(max)
+    local removed = self._svc:PruneProspects(max); publish(self,'pruned-prospects', removed); return removed
+end
+
+function ProspectsManager:PruneBlacklist(maxKeep)
+    local removed = self._svc:PruneBlacklist(maxKeep); publish(self,'pruned-blacklist', removed); return removed
+end
+
+function ProspectsManager:InviteProspect(guid)
+    local inv = self._invite
+    if inv and inv.InviteProspect and guid then return inv:InviteProspect(guid) end
+    return false
+end
+
+-- Registration using ClassProvide (provides alias for IProspectManager automatically)
+local function RegisterProspectsManager()
+    if not Addon or not Addon.ClassProvide then return end
+    if not (Addon.IsProvided and Addon.IsProvided('ProspectsManager')) then
+        Addon.ClassProvide('ProspectsManager', ProspectsManager, { lifetime = 'SingleInstance', meta = { layer = 'Infrastructure', role = 'controller', area = 'prospects' } })
     end
 end
 
--- Optional legacy export
-Addon.ProspectsManager = setmetatable({}, { __index = function(_, k) local inst=Addon.require("ProspectsManager"); return inst and inst[k] or nil end })
+RegisterProspectsManager()
+Addon._RegisterProspectsManager = RegisterProspectsManager
 
-return CreateProspectsManager
+Addon.ProspectsManager = setmetatable({}, { __index = function(_, k) local inst=Addon.require('ProspectsManager'); return inst and inst[k] or nil end })
+
+return ProspectsManager

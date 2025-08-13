@@ -18,6 +18,7 @@ local specs = {
   { key = "Scheduler", register = Addon._RegisterScheduler, resolve = false },
   -- Unified prospects + blacklist data service (post-repository refactor)
   { key = "ProspectsService", register = function() end, resolve = false }, -- self-registers on load
+  { key = "ProspectsManager", register = Addon._RegisterProspectsManager, resolve = false },
   { key = "ProspectsDataProvider", register = Addon._RegisterProspectsDataProvider, resolve = false },
   { key = "Recruiter", register = Addon._RegisterRecruiter, resolve = false },
   { key = "InviteService", register = Addon._RegisterInviteService, resolve = false },

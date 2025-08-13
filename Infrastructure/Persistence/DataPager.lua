@@ -23,10 +23,11 @@ local function CreateDataPager(scope)
 
   local function getProspectsProvider()
     if scope and scope.Resolve then
-      local ok, p = pcall(function() return scope:Resolve('ProspectsDataProvider') end)
+      local ok, p = pcall(function() return scope:Resolve('IProspectsReadModel') end)
       if ok and p then return p end
     end
-    return Addon.Get and Addon.Get('ProspectsDataProvider') or nil
+    if Addon.Get then return Addon.Get('IProspectsReadModel') end
+    return nil
   end
 
   local function getProspectsService()
