@@ -22,7 +22,7 @@ local DEFAULT_CATEGORIES = {
 
 -- Dynamic visibility helper for dev/debug category
 local function DebugVisible()
-  local cfg = Addon.require and Addon.require("Config") or Addon.Config
+  local cfg = Addon.require and Addon.require("IConfiguration") or (Addon.Get and Addon.Get("IConfiguration"))
   if cfg and cfg.IsDev then
     local ok, res = pcall(cfg.IsDev, cfg)
     if ok then return not not res end

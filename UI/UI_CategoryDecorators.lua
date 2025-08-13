@@ -1,25 +1,22 @@
--- UI_CategoryDecorators.lua — attach dynamic decorators (counts) to categories
-local ADDON_NAME, Addon = ...
+local __args = {...}
+local ADDON_NAME, Addon = __args[1], (__args[2] or _G[__args[1]] or {})
 
-local CM = Addon.require and Addon.require("Tools.CategoryManager") or nil
-if not CM then return end
-
-local function SafeRecruiter()
-  local ok, r = pcall(Addon.require, "Recruiter"); if ok then return r end
+-- Never build the container at file load; defer until CategoryManager is present.
+local function SafeManager()
+  -- Prefer interface; fall back to legacy recruiter if needed
+  local okM, m = pcall(function() return Addon.require and Addon.require("IProspectManager") end); if okM and m then return m end
+  local okR, r = pcall(function() return Addon.require and Addon.require("Recruiter") end); if okR and r then return r end
 end
 
 local function CountProspects()
-  local r = SafeRecruiter(); if not r or not r.GetAllGuids then return 0 end
-  local ok, res = pcall(r.GetAllGuids, r); if ok and type(res)=="table" then return #res end; return 0
+  local m = SafeManager(); if not m or not m.GetAllGuids then return 0 end
+  local ok, res = pcall(m.GetAllGuids, m); if ok and type(res)=="table" then return #res end; return 0
 end
 
 local function CountBlacklist()
-  local r = SafeRecruiter(); if not r then return 0 end
-  if r.GetBlacklistGuids then
-    local ok, res = pcall(r.GetBlacklistGuids, r); if ok and type(res)=="table" then return #res end
-  end
-  if r.GetBlacklist then
-    local ok, bl = pcall(r.GetBlacklist, r); if ok and type(bl)=="table" then
+  local m = SafeManager(); if not m then return 0 end
+  if m.GetBlacklist then
+    local ok, bl = pcall(m.GetBlacklist, m); if ok and type(bl)=="table" then
       local c=0; for _ in pairs(bl) do c=c+1 end; return c
     end
   end
@@ -31,23 +28,40 @@ local function FormatSuffix(count)
   return string.format(" |cffffaa33(%d)|r", count)
 end
 
-CM:RegisterCategoryDecorator("prospects", function()
-  return FormatSuffix(CountProspects())
-end)
+local attached = false
+local function TryAttach()
+  if attached then return true end
+  -- Use non-building Peek first; tolerate Get if container already built by this time
+  -- Never call Addon.Get here; only attach once the container exists (Peek returns non-nil)
+  local CM = (Addon.Peek and (Addon.Peek("UI.CategoryManager") or Addon.Peek("Tools.CategoryManager")))
+  if not CM then return false end
+  if not (CM.RegisterCategoryDecorator and CM.ApplyDecorators) then return false end
+  -- Register decorators
+  pcall(CM.RegisterCategoryDecorator, CM, "prospects", function()
+    return FormatSuffix(CountProspects())
+  end)
+  pcall(CM.RegisterCategoryDecorator, CM, "blacklist", function()
+    return FormatSuffix(CountBlacklist())
+  end)
+  attached = true
+  return true
+end
 
-CM:RegisterCategoryDecorator("blacklist", function()
-  return FormatSuffix(CountBlacklist())
-end)
-
--- Periodic refresh using animation loop (UI only, light)
+-- Periodic refresh using animation loop (UI only, light) and deferred attach
 local f = CreateFrame("Frame")
 local acc = 0
 f:SetScript("OnUpdate", function(_, dt)
   acc = acc + dt
-  if acc > 5 then -- every 5s
+  -- First, attempt to attach once the manager exists
+  if not attached then TryAttach() end
+  if acc > 5 then -- every ~5s
     acc = 0
-    if CM.ApplyDecorators then CM:ApplyDecorators() end
-    -- force sidebar rebuild if main UI present
-    if Addon.UI and Addon.UI.RefreshCategories then Addon.UI:RefreshCategories() end
+    if attached then
+  -- Only peek; do not build the container from here
+  local CM = (Addon.Peek and (Addon.Peek("UI.CategoryManager") or Addon.Peek("Tools.CategoryManager")))
+      if CM and CM.ApplyDecorators then pcall(CM.ApplyDecorators, CM) end
+      -- force sidebar rebuild if main UI present
+      if Addon.UI and Addon.UI.RefreshCategories then pcall(Addon.UI.RefreshCategories, Addon.UI) end
+    end
   end
 end)

@@ -1,3 +1,4 @@
+---@diagnostic disable
 -- Tools/ButtonLib.lua
 -- Custom skinnable button library (CSS-like variants + states) for GuildRecruiter
 -- Goals: consistent sizing, color system via Tokens, hover/active/disabled states, semantic variants.
@@ -10,65 +11,86 @@
 -- Exposes style tokens so future components can share.
 
 local ADDON_NAME, Addon = ...
-local Tokens = Addon.require and Addon.require("Tools.Tokens") or nil
-local UIHelpers = Addon.require and Addon.require("Tools.UIHelpers") or nil
+-- Lazy getters so we don't force DI container build at file load time
+local function GetTokens()
+  if Addon and Addon.Get then
+    local ok, t = pcall(Addon.Get, "Tools.Tokens")
+    if ok then return t end
+  end
+end
+local function GetUIHelpers()
+  if Addon and Addon.Get then
+    local ok, h = pcall(Addon.Get, "Tools.UIHelpers")
+    if ok then return h end
+  end
+end
 
 local ButtonLib = {}
 ButtonLib.__index = ButtonLib
 
 -- Variant style map (colors + gradient + border)
 local VARIANTS = {
-  primary = function() return {
-    gradIdle   = Tokens and Tokens.gradients.buttonIdle,
-    gradHover  = Tokens and Tokens.gradients.buttonHover,
-    gradActive = Tokens and Tokens.gradients.buttonSelected,
-    border     = (Tokens and Tokens.colors.accent.subtle) or {0.6,0.5,0.15},
-    glow       = (Tokens and Tokens.shadows.glowAccent) or {1,1,1,0.4},
-    textColor  = (Tokens and Tokens.colors.accent.active) or {1,0.85,0.1},
-  } end,
+  primary = function()
+    local T = GetTokens()
+    return {
+      gradIdle   = T and T.gradients.buttonIdle,
+      gradHover  = T and T.gradients.buttonHover,
+      gradActive = T and T.gradients.buttonSelected,
+      border     = (T and T.colors.accent.subtle) or {0.6,0.5,0.15},
+      glow       = (T and T.shadows.glowAccent) or {1,1,1,0.4},
+      textColor  = (T and T.colors.accent.active) or {1,0.85,0.1},
+    }
+  end,
   secondary = function() return {
     gradIdle   = { top={0.16,0.16,0.18,0.70}, bottom={0.10,0.10,0.11,0.80} },
     gradHover  = { top={0.22,0.22,0.24,0.80}, bottom={0.14,0.14,0.16,0.90} },
     gradActive = { top={0.28,0.28,0.30,0.85}, bottom={0.18,0.18,0.20,0.95} },
     border     = {0.32,0.32,0.34},
     glow       = {1,1,1,0.10},
-    textColor  = (Tokens and Tokens.colors.neutral[9]) or {0.95,0.95,0.97},
+    textColor  = ((GetTokens() and GetTokens().colors.neutral[9]) or {0.95,0.95,0.97}),
   } end,
-  subtle = function() return {
+  subtle = function()
+    local T = GetTokens()
+    return {
     gradIdle   = { top={0.12,0.12,0.13,0.30}, bottom={0.09,0.09,0.10,0.35} },
     gradHover  = { top={0.16,0.16,0.17,0.38}, bottom={0.11,0.11,0.12,0.42} },
     gradActive = { top={0.18,0.18,0.19,0.46}, bottom={0.13,0.13,0.14,0.50} },
     border     = {0.20,0.20,0.22},
     glow       = {1,1,1,0.08},
-    textColor  = (Tokens and Tokens.colors.neutral[8]) or {0.82,0.82,0.86},
-  } end,
-  danger = function() return {
+    textColor  = (T and T.colors.neutral[8]) or {0.82,0.82,0.86},
+  }
+  end,
+  danger = function()
+    local T = GetTokens()
+    return {
     gradIdle   = { top={0.30,0.08,0.06,0.80}, bottom={0.22,0.05,0.04,0.90} },
     gradHover  = { top={0.40,0.12,0.10,0.85}, bottom={0.30,0.09,0.08,0.95} },
     gradActive = { top={0.48,0.15,0.12,0.92}, bottom={0.36,0.12,0.10,0.98} },
-    border     = (Tokens and Tokens.colors.status.danger) or {0.85,0.2,0.18},
+    border     = (T and T.colors.status.danger) or {0.85,0.2,0.18},
     glow       = {0.85,0.20,0.18,0.25},
     textColor  = {1,0.90,0.90},
-  } end,
+  }
+  end,
   ghost = function() return {
     gradIdle   = { top={0.10,0.10,0.11,0.10}, bottom={0.07,0.07,0.08,0.12} },
     gradHover  = { top={0.14,0.14,0.15,0.18}, bottom={0.10,0.10,0.11,0.24} },
     gradActive = { top={0.16,0.16,0.17,0.25}, bottom={0.12,0.12,0.13,0.32} },
     border     = {0.18,0.18,0.20},
     glow       = {1,1,1,0.05},
-    textColor  = (Tokens and Tokens.colors.neutral[8]) or {0.82,0.82,0.86},
+    textColor  = ((GetTokens() and GetTokens().colors.neutral[8]) or {0.82,0.82,0.86}),
   } end,
 }
 
 local SIZE_MAP = {
-  sm = { padX=8,  padY=4,  font=Tokens and Tokens.typography.button or "GameFontHighlightSmall" },
-  md = { padX=12, padY=6,  font=Tokens and Tokens.typography.button or "GameFontHighlight" },
-  lg = { padX=16, padY=8,  font=Tokens and Tokens.typography.button or "GameFontNormal" },
+  sm = { padX=8,  padY=4,  font=(GetTokens() and GetTokens().typography.button) or "GameFontHighlightSmall" },
+  md = { padX=12, padY=6,  font=(GetTokens() and GetTokens().typography.button) or "GameFontHighlight" },
+  lg = { padX=16, padY=8,  font=(GetTokens() and GetTokens().typography.button) or "GameFontNormal" },
 }
 
 local function ApplyGradient(tex, grad)
-  if UIHelpers and UIHelpers.ApplyGradient then
-    UIHelpers.ApplyGradient(tex, grad.top, grad.bottom)
+  local H = GetUIHelpers()
+  if H and H.ApplyGradient then
+    H.ApplyGradient(tex, grad.top, grad.bottom)
   else
     local c=grad.top or {0.2,0.2,0.2,0.8}; tex:SetColorTexture(c[1],c[2],c[3],c[4] or 1)
   end
@@ -156,11 +178,10 @@ function ButtonLib:Create(parent, opts)
 
   function btn:SetText(t) if self._text then self._text:SetText(t); SetSizeVariant(self, self._sizeKey) end end
   function btn:SetVariant(v)
-    if VARIANTS[v] then
-      self._variantKey = v
-      self._style = VARIANTS[v]()
-      StyleButton(self); UpdateVisualState(self, "idle")
-    end
+    local f = VARIANTS[v] or VARIANTS.primary
+    self._variantKey = v or "primary"
+    self._style = f()
+    StyleButton(self); UpdateVisualState(self, "idle")
   end
   function btn:SetSizeVariant(sz) SetSizeVariant(self, sz) end
   function btn:SetEnabledState(on)

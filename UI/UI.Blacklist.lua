@@ -1,5 +1,5 @@
 -- UI.Blacklist.lua — Modern Enhanced Blacklist page with better styling
-local _, Addon = ...
+local Addon = select(2, ...)
 local M = {}
 
 local PAD, ROW_H = 12, 26 -- Slightly taller rows for better readability
@@ -18,16 +18,20 @@ local function classRGB(token)
   return 0.6, 0.6, 0.6 -- muted for blacklisted
 end
 
+local function getPM()
+  return (Addon.Get and Addon.Get('IProspectManager')) or Addon.Recruiter
+end
+
 local function getBlacklistWithProspectInfo()
-  local R = Addon.Recruiter
-  if not R then return {} end
+  local PM = getPM()
+  if not PM then return {} end
   
-  local blacklist = R.GetBlacklist and R:GetBlacklist() or {}
+  local blacklist = PM.GetBlacklist and PM:GetBlacklist() or {}
   local prospects = {}
   
   -- Get prospect data for each blacklisted GUID
   for guid, blEntry in pairs(blacklist) do
-    local prospect = R.GetProspect and R:GetProspect(guid)
+  local prospect = PM.GetProspect and PM:GetProspect(guid)
     if prospect then
       local reason, ts = "manual", 0
       if type(blEntry) == "table" then
@@ -80,19 +84,20 @@ local function getBlacklistWithProspectInfo()
 end
 
 local function toast(text, r, g, b)
-  if UIErrorsFrame and UIErrorsFrame.AddMessage then
-    UIErrorsFrame:AddMessage(text, r or 1, g or 0.82, b or 0)
+  local UIEF = rawget(_G, "UIErrorsFrame")
+  if UIEF and UIEF.AddMessage then
+    UIEF:AddMessage(text, r or 1, g or 0.82, b or 0)
   else
-    print("|cffffc107[GuildRecruiter]|r "..text)
+    print("|cffffc107[GuildRecruiter]|r "..tostring(text))
   end
 end
 
 function M:Create(parent)
   local f = CreateFrame("Frame", nil, parent); f:SetAllPoints()
-  local R = Addon.Recruiter
+  local PM = getPM()
   local Bus = Addon.EventBus
   local Log = Addon.Logger and Addon.Logger:ForContext("UI.Blacklist")
-  local ButtonLib = Addon.require and Addon.require("Tools.ButtonLib")
+  local ButtonLib = Addon.require and (Addon.require("UI.ButtonLib") or Addon.require("Tools.ButtonLib"))
 
   -- Add semi-transparent background to reduce dragonfly interference (same as Prospects)
   local bgFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")
@@ -326,8 +331,8 @@ function M:Create(parent)
 
       -- Unblock button (same interaction pattern as Prospects)
       row.unblockBtn:SetScript("OnClick", function()
-        if R and R.Unblacklist then 
-          R:Unblacklist(e.guid) 
+        if PM and PM.Unblacklist then 
+          PM:Unblacklist(e.guid) 
           toast(("Unblacklisted %s - moved to active prospects"):format(e.name or "?"), 0, 1, 0)
         end
         if Log then Log:Info("Unblacklisted {Name} {GUID}", { Name = e.name, GUID = e.guid }) end
@@ -345,9 +350,11 @@ function M:Create(parent)
 
   -- Event subscriptions (same as Prospects)
   if Bus and Bus.Subscribe then
-    Bus:Subscribe("Recruiter.Blacklisted", function() if f:IsShown() then f:Render() end end)
-    Bus:Subscribe("BlacklistUpdated", function() if f:IsShown() then f:Render() end end)
-    Bus:Subscribe("Recruiter.ProspectUpdated", function() if f:IsShown() then f:Render() end end)
+    Bus:Subscribe("Prospects.Changed", function(_, action)
+      if f:IsShown() and (action == "blacklisted" or action == "unblacklisted" or action == "removed" or action == "declined") then
+        f:Render()
+      end
+    end, { namespace = "UI.Blacklist" })
   end
 
   local originalShow = f.Show

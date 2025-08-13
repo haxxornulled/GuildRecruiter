@@ -1,5 +1,6 @@
 -- UI_SidePanel.lua — Modern ButtonLib-powered sidebar with snazzy CSS-style buttons
-local _, Addon = ...
+---@diagnostic disable: undefined-global, undefined-field, inject-field
+local Addon = select(2, ...)
 local SidePanel = {}
 
 -- Optimized button configuration for compact sidebar
@@ -56,11 +57,12 @@ local function CreateModernSeparator(parent)
 end
 
 local function CreateModernCategoryButton(parent, text, categoryData)
-  local ButtonLib = Addon.require and Addon.require("Tools.ButtonLib")
+  local ButtonLib = Addon.require and (Addon.require("UI.ButtonLib") or Addon.require("Tools.ButtonLib"))
   
   if not ButtonLib then
     -- Enhanced fallback for when ButtonLib isn't available
-    local btn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+  local btn = CreateFrame("Button", nil, parent)
+  pcall(function() btn:SetNormalFontObject("GameFontNormal") end)
     btn:SetSize(BUTTON_CONFIG.width, BUTTON_CONFIG.height)
     btn:SetText(text)
     btn:SetNormalFontObject("GameFontHighlightSmall")
@@ -171,7 +173,7 @@ local function BuildModernButtons(sidebar, categories)
       btn:Hide()
     end
   end
-  wipe(oldButtons)
+  if type(wipe) == "function" then wipe(oldButtons) else for i=#oldButtons,1,-1 do oldButtons[i]=nil end end
   
   local buttons = {}
   local currentY = BUTTON_CONFIG.gap -- Start with some top padding
@@ -218,7 +220,7 @@ local function BuildModernButtons(sidebar, categories)
         end
         
         -- Add subtle sound feedback (optional)
-        if clickedBtn._isSelected then
+        if clickedBtn._isSelected and type(PlaySound)=="function" and type(SOUNDKIT)=="table" then
           PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
         end
       end)
@@ -246,7 +248,7 @@ end
 
 function SidePanel:Create(parent, categories, onSelectIndex)
   -- Create main sidebar frame with compact sizing
-  local sidebar = CreateFrame("Frame", nil, parent, "InsetFrameTemplate3")
+  local sidebar = CreateFrame("Frame", nil, parent)
   sidebar:SetWidth(BUTTON_CONFIG.width + (BUTTON_CONFIG.paddingX * 2) + 12) -- Compact width
   sidebar:SetPoint("TOPLEFT", 6, -42)
   sidebar:SetPoint("BOTTOMLEFT", 6, 10)
@@ -263,7 +265,7 @@ function SidePanel:Create(parent, categories, onSelectIndex)
   overlay:SetColorTexture(0.05, 0.05, 0.08, 0.7) -- Dark overlay matching other UI
   
   -- Create scroll frame with enhanced styling
-  local scroll = CreateFrame("ScrollFrame", nil, sidebar, "UIPanelScrollFrameTemplate")
+  local scroll = CreateFrame("ScrollFrame", nil, sidebar)
   scroll:SetPoint("TOPLEFT", 4, -4)
   scroll:SetPoint("BOTTOMRIGHT", -26, 4)
   

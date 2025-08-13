@@ -2,7 +2,8 @@
 -- Central design tokens (colors, spacing, radii, typography, shadows, transitions)
 -- These are source-of-truth values to be referenced by style helpers & components.
 
-local ADDON_NAME, Addon = ...
+local __p = { ... }
+local ADDON_NAME, Addon = __p[1], (__p[2] or {})
 local Tokens = {}
 
 -- Color palette (WCAG-ish contrast minded). Naming: role + intensity.
@@ -71,20 +72,29 @@ Tokens.gradients = {
 
 -- Utility: fetch color safely (returns r,g,b[,a])
 function Tokens:GetColor(path, fallback)
-  local ref = self.colors
-  for seg in string.gmatch(path, "[^%.]+") do
-    if type(ref) ~= "table" then ref=nil; break end
-    ref = ref[seg]
+  local cursor = self.colors
+  if type(cursor) ~= "table" then
+    if type(fallback) == "table" then local r=fallback[1] or 1; local g=fallback[2] or 1; local b=fallback[3] or 1; local a=fallback[4] or 1; return r,g,b,a end
+    return 1,1,1,1
   end
-  if type(ref)=="table" then
-    return ref[1] or (fallback and fallback[1]) or 1,
-           ref[2] or (fallback and fallback[2]) or 1,
-           ref[3] or (fallback and fallback[3]) or 1,
-           ref[4] or (fallback and fallback[4]) or 1
+  local target = cursor
+  for seg in string.gmatch(path or "", "[^%.]+") do
+    if type(target) ~= "table" then target = nil; break end
+    target = target[seg]
   end
-  if fallback then return unpack(fallback) end
+  if type(target) == "table" then
+    local r = target[1] or (fallback and fallback[1]) or 1
+    local g = target[2] or (fallback and fallback[2]) or 1
+    local b = target[3] or (fallback and fallback[3]) or 1
+    local a = target[4] or (fallback and fallback[4]) or 1
+    return r,g,b,a
+  end
+  if type(fallback) == "table" then
+    local r = fallback[1] or 1; local g = fallback[2] or 1; local b = fallback[3] or 1; local a = fallback[4] or 1
+    return r,g,b,a
+  end
   return 1,1,1,1
 end
 
-Addon.provide("Tools.Tokens", Tokens)
+if Addon.provide then Addon.provide("Tools.Tokens", Tokens) end
 return Tokens

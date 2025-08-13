@@ -1,0 +1,35 @@
+## Interface: 100007
+## Title: TaintedSin Enterprise Framework
+## Notes: Enterprise WoW Addon Framework - Serilog-style logging, DI container, modular architecture
+## Author: Your Name
+## Version: 2.0.0
+## SavedVariables: TaintedSinLogDB
+## SavedVariablesPerCharacter: TaintedSinLogCharDB
+
+# Core Framework (Load order critical)
+Core\PackageLoader.lua
+Core\Core.lua
+Logger.lua
+LogConsole.lua
+SavedVariablesSink.lua
+
+# Supporting Modules (legacy)
+Class.lua
+Interface.lua
+TypeCheck.lua
+TryCatch.lua
+
+# Utility Modules
+Modules\ArrayUtils.lua
+Modules\EventBus.lua
+
+# Demo/Example Modules
+Modules\LoggerDemo.lua
+Modules\HelloWorld.lua
+Modules\ExampleUtilities.lua
+Modules\EventBusDemo.lua
+Modules\ExampleIntegration.lua
+
+# Framework Initialization (Must be last)
+init.lua
+MyAddon.lua

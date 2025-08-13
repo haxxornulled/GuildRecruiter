@@ -1,0 +1,19 @@
+-- Docs/RepositoryContracts.lua
+-- Central developer-facing documentation for repository contracts.
+-- ProspectRepository:
+--   Methods:
+--     GetAll() -> array<prospect>
+--     Save(prospect) -> ()
+--
+-- BlacklistRepository:
+--   Methods:
+--     Add(guid, reason?) -> ()
+--     Remove(guid) -> ()
+--     Contains(guid) -> bool
+--     GetAll() -> table<guid, entry>
+--     Prune(maxKeep:int) -> removedCount
+--     GetReason(guid) -> string|nil
+--   Entry schema: { reason = string, timestamp = epochSeconds }
+--
+-- NOTE: These are non-executable docs to keep Core free of non-domain artifacts.
+return {}

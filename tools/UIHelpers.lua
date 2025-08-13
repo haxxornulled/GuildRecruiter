@@ -1,10 +1,18 @@
--- Tools/UIHelpers.lua
--- Reusable UI helper utilities: gradient, shadows, animations (lightweight), pooling.
+---@diagnostic disable: undefined-global, undefined-field, need-check-nil
 
-local ADDON_NAME, Addon = ...
-local Tokens = Addon.Get and Addon.Get("Tools.Tokens")
+local __p = { ... }
+local ADDON_NAME, Addon = __p[1], (__p[2] or _G[__p[1]] or _G.GuildRecruiter or {})
+-- Use non-building peek at file load; resolve later on demand
+local Tokens = (Addon.Peek and Addon.Peek("Tools.Tokens")) or nil
+local CreateColor = _G and _G.CreateColor
+local DEFAULT_CHAT_FRAME = _G and _G.DEFAULT_CHAT_FRAME
+local SlashCmdList = _G and _G.SlashCmdList or {}
+local time = _G and _G.time or function() return 0 end
+local ChatFontNormal = _G and (_G.ChatFontNormal or _G.GameFontNormal)
+local function tremove(t) return table.remove(t) end
+local function wipe(t) for k in pairs(t) do t[k]=nil end end
 local UIHelpers = {}
-local AccordionSections = (Addon.Get and (Addon.Get("Collections.AccordionSections") or Addon.Get("AccordionSections")))
+local AccordionSections = (Addon.Peek and (Addon.Peek("Collections.AccordionSections") or Addon.Peek("AccordionSections")))
 -- Fallback (in case load order or registration failed) to avoid hard error; minimal subset
 if not AccordionSections then
   AccordionSections = {}
@@ -16,7 +24,7 @@ if not AccordionSections then
   function AccordionSections:Get(i) return self._list[i] end
   function AccordionSections:RemoveAt(i) if i<1 or i>#self._list then return end table.remove(self._list,i) end
 end
-local List = Addon.Get and Addon.Get("Collections.List") or Addon.List
+local List = (Addon.Peek and Addon.Peek("Collections.List")) or Addon.List
 
 -- Gradient application (vertical only for simplicity)
 function UIHelpers.ApplyGradient(tex, top, bottom)
@@ -69,6 +77,41 @@ function UIHelpers.Fade(frame, targetAlpha, duration, onDone)
   end)
 end
 
+-- Animate a numeric property via a setter callback
+-- setter(progressValue) will be called each frame with the interpolated value
+function UIHelpers.AnimateNumber(from, to, duration, setter, onDone)
+  if not setter or not duration or duration <= 0 then if setter then setter(to) end if onDone then pcall(onDone) end return end
+  local elapsed = 0
+  local done = false
+  local host = CreateFrame("Frame")
+  host:Show()
+  host:SetScript("OnUpdate", function(_, dt)
+    if done then return end
+    elapsed = elapsed + dt
+    local p = math.min(1, elapsed / duration)
+    local v = from + (to - from) * p
+    pcall(setter, v)
+    if p >= 1 then
+      done = true
+      host:Hide() -- stop OnUpdate firing
+      -- keep a no-op to satisfy analyzers that dislike nil handlers
+      host:SetScript("OnUpdate", function() end)
+      if onDone then pcall(onDone) end
+    end
+  end)
+end
+
+-- Slide a frame's width from -> to over duration; optional per-step callback
+function UIHelpers.SlideWidth(frame, from, to, duration, onStep, onDone)
+  if not frame then if onDone then pcall(onDone) end return end
+  local function setter(v)
+    v = math.max(0, math.floor(v + 0.5))
+    frame:SetWidth(v)
+    if onStep then pcall(onStep, v) end
+  end
+  UIHelpers.AnimateNumber(from or frame:GetWidth() or 0, to or 0, duration or 0.20, setter, onDone)
+end
+
 -- Basic frame pooling (homogeneous frame type). Caller supplies createFn(parent) -> frame.
 function UIHelpers.GetPool(createFn)
   local pool = { _free = {}, _active = {} }
@@ -108,12 +151,13 @@ function UIHelpers.CreateAccordion(parent, sections, opts)
   local accent  = Tokens and Tokens.colors and Tokens.colors.accent or nil
 
   local frame = CreateFrame("Frame", nil, parent)
-  frame.sections = AccordionSections.new()
+  rawset(frame, 'sections', AccordionSections.new())
+  local function Sections() return rawget(frame, 'sections') end
 
   local function Relayout()
     local y = 0
     local total = 0
-  frame.sections:ForEach(function(sec)
+  Sections():ForEach(function(sec)
         sec:ClearAllPoints()
         sec:SetPoint("TOPLEFT", 0, -y)
         sec:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
@@ -128,7 +172,7 @@ function UIHelpers.CreateAccordion(parent, sections, opts)
 
   local function CollapseOthers(except)
     if not singleExpand then return end
-    frame.sections:ForEach(function(s)
+    Sections():ForEach(function(s)
       if s ~= except and s._expanded then
         s._expanded = false
         if s.content then s.content:Hide() end
@@ -367,7 +411,7 @@ function UIHelpers.CreateAccordion(parent, sections, opts)
 
   btn:SetScript("OnClick", function() frame:Toggle(sec.key) end)
 
-  frame.sections:Add(sec)
+  Sections():Add(sec)
   keyMap[sec.key] = sec
     return sec
   end
@@ -609,7 +653,7 @@ do
           end
           return
         elseif cmd == "test" and args[2] == "decline" then
-          local cfg = Addon.require and Addon.require("Config")
+          local cfg = Addon.require and Addon.require("IConfiguration")
           if not (cfg and cfg.Get and cfg:Get("devMode", false)) then println("Dev mode required (/gr devmode on)") return end
           local who = args[3]; if not who then println("Usage: /gr test decline <Name>") return end
           local recruiter = Addon.require and Addon.require("Recruiter")

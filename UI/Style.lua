@@ -1,5 +1,5 @@
 -- UI/Style.lua – Central design tokens & helpers (2025 modernization)
-local _, Addon = ...
+local Addon = select(2, ...)
 
 local Style = {}
 

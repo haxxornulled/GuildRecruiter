@@ -1,5 +1,5 @@
 -- UI/Theme_Dragonfly.lua — simple background theme hook
-local _, Addon = ...
+local Addon = select(2, ...)
 
 local Theme = {}
 Addon.Theme = Theme

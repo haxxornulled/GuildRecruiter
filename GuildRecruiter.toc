@@ -1,58 +1,89 @@
-## Interface: 100207
+## Interface: 110000
 ## Title: GuildRecruiter
 ## Notes: Guild recruiting assistant (prospects, blacklist, rotation messages)
 ## Author: Distributed Cloud of Sentient Macros
 ## Version: 0.1.0
 ## SavedVariables: GuildRecruiterDB
 
-# Core bootstrap
-Core.lua
+# Core-only smoke test load
 
-# Collections (LINQ-style for Lua) - Load early so other services can use them
-Collections/List.lua
-Collections/Dictionary.lua
-Collections/Extensions.lua
-Collections/Queue.lua
-Collections/AccordionSections.lua
+# Core bootstrap and DI container
+Core/Core.lua
+Core/OOP/Class.lua
+Core/OOP/Interface.lua
+Core/Contracts/IProspectsService.lua
+Core/Contracts/IInviteService.lua
+Core/Contracts/IEventBus.lua
+Core/Contracts/IScheduler.lua
+Core/Contracts/IConfiguration.lua
+Core/Contracts/IProspectManager.lua
+Core/Contracts/IServiceProvider.lua
+Core/Contracts/ISlashCommandHandler.lua
 
-# Infrastructure services
-Config.lua
-Services/SavedVarsService.lua
-Logger.lua
-EventBus.lua
-Scheduler.lua
+# Logging (needed by debug commands)
+Infrastructure/Logging/Logger.lua
+
+# Event bus adapter (WoW event bridge)
+Infrastructure/Messaging/EventBus.lua
+
+# Scheduler adapter
+Infrastructure/Time/Clock.lua
+Infrastructure/Scheduling/Scheduler.lua
+
+# Environment/runtime capabilities (probe + slash cmd)
+Infrastructure/Environment/RuntimeCaps.lua
+
+# Service implementations
+Infrastructure/Services/SavedVarsService.lua
+Infrastructure/Config/Config.lua
+Infrastructure/Services/ProspectsService.lua
+Infrastructure/Services/InviteService.lua
+Infrastructure/Providers/ProspectsDataProvider.lua
+Infrastructure/Services/OptionsService.lua
+Infrastructure/Services/InMemoryCache.lua
+Infrastructure/Persistence/DataPager.lua
+Infrastructure/Serialization/JSON.lua
+tools/Tokens.lua
+tools/UIHelpers.lua
+tools/ButtonLib.lua
+Infrastructure/UI/ButtonLib.lua
+Infrastructure/UI/CategoryManager.lua
+Infrastructure/Chat/ChatEventBridge.lua
+Infrastructure/Chat/ChatRouting.lua
+
+# Domain + application
 GuildRecruiter.lua
-InviteService.lua
-Helpers/ChatChannelHelper.lua
-Helpers/RoleHelper.lua
-ProspectsManager.lua
+Application/Commands.lua
+Application/SlashCommandHandler.lua
+Application/ProspectsManager.lua
+Application/Chat/ChatFeed.lua
 
-# Tools (utility managers used by UI and services)
-Tools/CategoryManager.lua
-Tools/Tokens.lua
-Tools/UIHelpers.lua
-Tools/ButtonLib.lua
-Tools/JSON.lua
+# Framework
+Framework/Bootstrap.lua
+Framework/ServiceRegistry.lua
 
-# UI (load foundational style/theme + side panel before main frame)
-UI/Style.lua
-UI/Theme_Dragonfly.lua
-UI/UI_SidePanel.lua
+# Core domain entities (interfaces moved to Docs for reference only)
+Core/Entities/Prospect.lua
+
+# Core collections (only those required by current runtime)
+Core/Collections/List.lua
+Core/Collections/Dictionary.lua
+Core/Collections/Extensions.lua
+Core/Collections/Queue.lua
+Core/Collections/LRU.lua
+
+# Core debug slash commands
+Core/DebugCommands.lua
+UI/CompositionRoot.lua
+Init.lua
+UI/UI_ChatPanel.lua
 UI/UI_CategoryDecorators.lua
-UI/UI_Summary.lua
-UI/UI_Debug.lua
+UI/Components/DataGrid.lua
 UI/UI_MainFrame.lua
+UI/UI_Debug.lua
+UI/UI_LogConsole.lua
+UI/UI_Summary.lua
 UI/UI_Prospects.lua
 UI/UI.Blacklist.lua
 UI/UI_Settings.lua
 
-# Commands
-Commands.lua
-
-# Options
-Options.lua
-
-# (Examples & showcase removed for production)
-
-# Init MUST be last - after all other files have loaded
-Init.lua

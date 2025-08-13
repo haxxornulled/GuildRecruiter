@@ -1,529 +1,476 @@
--- UI.Prospects.lua — Modern Enhanced Prospects page with filtering, sorting, and better styling
-local _, Addon = ...
-
+---@diagnostic disable: undefined-global, undefined-field, inject-field
+local __args = {...}
+local AddonName, Addon = __args[1], (__args[2] or _G[__args[1]] or {})
+if type(AddonName) ~= 'string' or AddonName == '' then AddonName = 'GuildRecruiter' end
 local M = {}
-local PAD, ROW_H = 12, 26 -- Slightly taller rows for better readability
-local REMOVE_ICON = 136813
-local INVITE_ICON = 524051
 
-local CLASS_TEX = "Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
-local CLASS_TCOORDS = CLASS_ICON_TCOORDS
+-- Dependency shortcuts (resolved lazily for safety)
+local function getProvider() return Addon.Get and Addon.Get("ProspectsDataProvider") end
+local function getProspectManager()
+  -- Prefer interface abstraction; fall back to legacy Recruiter for backward compat
+  local m = Addon.Get and Addon.Get('IProspectManager')
+  if m then return m end
+  return Addon.Get and Addon.Get('Recruiter')
+end
+local function getBus() return Addon.Get and Addon.Get("EventBus") end
+local function getLogger()
+  local l = Addon.Get and Addon.Get("Logger")
+  if l and l.ForContext then return l:ForContext("UI.Prospects") end
+  -- Fallback shim with variadic no-op methods to satisfy calls
+  local noop = function(...) end
+  return { Info=noop, Debug=noop, Warn=noop, Error=noop }
+end
 
--- Filter and sort state
-local filterState = {
-  status = "Active",     -- Active, Blacklisted, All
-  sortBy = "Name",       -- Name, Class, Level, Status
-  sortDesc = false       -- true for descending
+-- Column definitions for DataGrid
+local COLUMNS = {
+  { key='classIcon', label='', width=22, sortable=false, renderer=function(cell, _, rec)
+      if not cell.icon then
+        cell.icon = cell:CreateTexture(nil, 'ARTWORK')
+        cell.icon:SetPoint('CENTER')
+        cell.icon:SetSize(20,20)
+      end
+      local token = rec and rec.classToken and rec.classToken:upper()
+      if token and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[token] then
+        cell.icon:SetTexture('Interface/GLUES/CHARACTERCREATE/UI-CHARACTERCREATE-CLASSES')
+        cell.icon:SetTexCoord(unpack(CLASS_ICON_TCOORDS[token]))
+        cell.icon:Show()
+      else
+        cell.icon:Hide()
+      end
+    end },
+  { key='name', label='Name', width=170, sortable=true, renderer=function(cell, val, rec)
+      if not cell.text then return end
+      cell.text:SetText(val or '?')
+      local token = rec and rec.classToken
+      if token and C_ClassColor and C_ClassColor.GetClassColor then
+        local c = C_ClassColor.GetClassColor(token)
+        if c then cell.text:SetTextColor(c.r, c.g, c.b) end
+      else
+        cell.text:SetTextColor(0.85,0.85,0.9)
+      end
+    end },
+  { key='level', label='Lvl', width=34, sortable=true, renderer=function(cell,val)
+      if cell.text then cell.text:SetText(val or '?'); cell.text:SetTextColor(1,1,1) end
+    end },
+  { key='className', label='Class', width=100, sortable=true, renderer=function(cell,val,rec)
+      if not cell.text then return end
+      local token = rec and rec.classToken
+      if token and C_ClassColor and C_ClassColor.GetClassColor then
+        local c = C_ClassColor.GetClassColor(token); if c then cell.text:SetTextColor(c.r,c.g,c.b) end
+      else
+        cell.text:SetTextColor(0.8,0.8,0.85)
+      end
+      cell.text:SetText(val or '')
+    end },
+  { key='status', label='Status', width=70, sortable=true, renderer=function(cell, val)
+      if not cell.text then return end
+      local t = val or ''
+      cell.text:SetText(t)
+      if t == 'Blacklisted' then cell.text:SetTextColor(1,0.35,0.35)
+      elseif t == 'New' then cell.text:SetTextColor(0.3,0.95,0.3)
+      elseif t == 'Invited' then cell.text:SetTextColor(0.3,0.7,1)
+      else cell.text:SetTextColor(1,0.95,0.7) end
+    end },
+  { key='lastSeen', label='Last Seen', width=90, sortable=true, renderer=function(cell, _, rec)
+      if not cell.text or not rec then return end
+      local ts = rec.lastSeen or 0
+      local out
+      if ts == 0 then out = 'Never' else
+        local d = (rawget(_G,'time') or function() return 0 end)() - ts
+        if d < 60 then out = 'now'
+        elseif d < 3600 then out = math.floor(d/60)..'m'
+        elseif d < 86400 then out = math.floor(d/3600)..'h'
+        else out = math.floor(d/86400)..'d' end
+      end
+      cell.text:SetText(out)
+      cell.text:SetTextColor(0.8,0.8,0.85)
+    end },
+  { key='actions', label='Actions', width=120, sortable=false }
 }
 
--- Lazy logger accessor
-local function LOG()
-  local L = Addon.Logger
-  return (L and L.ForContext and L:ForContext("UI.Prospects")) or nil
-end
+local STATUS_FILTERS = {
+  { value='all', label='All' },
+  { value='active', label='Active' },
+  { value='blacklisted', label='Blacklisted' },
+  { value='new', label='New' },
+}
 
-local function classRGB(token)
-  if token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token] then
-    local c = RAID_CLASS_COLORS[token]; return c.r, c.g, c.b
+local state = { search='', status='all' }
+local DEBUG_SPAM=false
+
+local function buildFilterFn()
+  local search = (state.search or ''):lower()
+  local status = state.status
+  local hasSearch = search ~= ''
+  return function(p)
+  local ps = tostring(p.status or '')
+  local st = tostring(status or 'all')
+  local okStatus = (st=='all') or (st=='active' and ps~='Blacklisted') or (st=='blacklisted' and ps=='Blacklisted') or (st=='new' and ps=='New')
+  if not okStatus then return false end
+    if hasSearch then
+      local name=(p.name or ''):lower(); local cls=(p.className or p.classToken or ''):lower()
+      if not (name:find(search,1,true) or cls:find(search,1,true)) then return false end
+    end
+    return true
   end
-  if token and C_ClassColor and C_ClassColor.GetClassColor then
-    local c = C_ClassColor.GetClassColor(token); if c then return c:GetRGB() end
-  end
-  return 1,1,1 -- neutral
-end
-
-local function toast(text, r, g, b)
-  if UIErrorsFrame and UIErrorsFrame.AddMessage then
-    UIErrorsFrame:AddMessage(text, r or 1, g or 0.82, b or 0)
-  else
-    print("|cffffc107[GuildRecruiter]|r "..text)
-  end
-end
-
-local function secs(n) return math.floor(n + 0.5) end
-
--- Create dropdown using UIDropDownMenu
-local function CreateFilterDropdown(parent, width, items, current, onChange)
-  local dropdown = CreateFrame("Frame", nil, parent, "UIDropDownMenuTemplate")
-  UIDropDownMenu_SetWidth(dropdown, width or 120)
-  
-  UIDropDownMenu_Initialize(dropdown, function()
-    local info = UIDropDownMenu_CreateInfo()
-    info.func = function(self, arg1, arg2, checked)
-      UIDropDownMenu_SetSelectedValue(dropdown, arg1)
-      if onChange then onChange(arg1) end
-    end
-    
-    for _, item in ipairs(items) do
-      info.text = item.text
-      info.value = item.value
-      info.arg1 = item.value
-      info.checked = (item.value == current)
-      UIDropDownMenu_AddButton(info)
-    end
-  end)
-  
-  UIDropDownMenu_SetSelectedValue(dropdown, current)
-  UIDropDownMenu_SetText(dropdown, current)
-  
-  return dropdown
-end
-
--- Enhanced data building with filtering and sorting
-local function buildFilteredSortedList(R)
-  local list = {}
-  if not R or not R.GetAllGuids then return list end
-  
-  -- Build full list
-  for _, guid in ipairs(R:GetAllGuids()) do
-    local p = R:GetProspect(guid)
-    if p then
-      local status = p.status or "New"
-      list[#list+1] = {
-        guid = p.guid, 
-        name = p.name or "?", 
-        realm = p.realm,
-        class = p.className or "Unknown", 
-        classFile = p.classToken,
-        level = p.level or 1, 
-        source = (p.sources and next(p.sources)) or "",
-        status = status,
-        statusDisplay = status == "Blacklisted" and "Blacklisted" or "Active",
-        lastSeen = p.lastSeen or 0,
-        declinedAt = p.declinedAt,
-        declinedBy = p.declinedBy
-      }
-    end
-  end
-  
-  -- Apply status filter
-  if filterState.status ~= "All" then
-    local filtered = {}
-    for _, p in ipairs(list) do
-      if filterState.status == "Active" and p.status ~= "Blacklisted" then
-        filtered[#filtered+1] = p
-      elseif filterState.status == "Blacklisted" and p.status == "Blacklisted" then
-        filtered[#filtered+1] = p
-      end
-    end
-    list = filtered
-  end
-  
-  -- Apply sorting
-  table.sort(list, function(a, b)
-    local aVal, bVal
-    
-    if filterState.sortBy == "Name" then
-      aVal, bVal = a.name:lower(), b.name:lower()
-    elseif filterState.sortBy == "Class" then
-      aVal, bVal = a.class:lower(), b.class:lower()
-      -- Secondary sort by name for same class
-      if aVal == bVal then
-        aVal, bVal = a.name:lower(), b.name:lower()
-      end
-    elseif filterState.sortBy == "Level" then
-      aVal, bVal = a.level, b.level
-      -- Secondary sort by name for same level
-      if aVal == bVal then
-        aVal, bVal = a.name:lower(), b.name:lower()
-      end
-    elseif filterState.sortBy == "Status" then
-      aVal, bVal = a.statusDisplay:lower(), b.statusDisplay:lower()
-      -- Secondary sort by name for same status
-      if aVal == bVal then
-        aVal, bVal = a.name:lower(), b.name:lower()
-      end
-    else
-      aVal, bVal = a.name:lower(), b.name:lower()
-    end
-    
-    if filterState.sortDesc then
-      return aVal > bVal
-    else
-      return aVal < bVal
-    end
-  end)
-
-  return list
 end
 
 function M:Create(parent)
-  local f = CreateFrame("Frame", nil, parent); f:SetAllPoints()
+  local frame = CreateFrame('Frame', nil, parent)
+  frame:SetAllPoints()
 
-  local Bus = Addon.EventBus
-  local Recruiter = Addon.Recruiter
-  local InviteService = Addon.InviteService
-  local Config = Addon.Config
-  local ButtonLib = Addon.require and Addon.require("Tools.ButtonLib")
+  -- Themed background similar to blacklist view
+  -- Texture-based background (avoid BackdropTemplate analyzer complaints)
+  local bg = CreateFrame('Frame', nil, frame)
+  bg:SetAllPoints()
+  local bgTex = bg:CreateTexture(nil,'BACKGROUND',nil,-8)
+  bgTex:SetAllPoints(); bgTex:SetColorTexture(0.05,0.05,0.08,0.85)
+  local border = bg:CreateTexture(nil,'BACKGROUND',nil,-7)
+  border:SetPoint('TOPLEFT', 1, -1); border:SetPoint('BOTTOMRIGHT', -1, 1)
+  border:SetColorTexture(0.3,0.3,0.35,0.8)
 
-  -- Add semi-transparent background to reduce dragonfly interference
-  local bgFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")
-  bgFrame:SetAllPoints()
-  bgFrame:SetBackdrop({
-    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
-    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 }
+  -- Title / count header bar
+  local headerFrame = CreateFrame('Frame', nil, frame)
+  headerFrame:SetPoint('TOPLEFT', frame, 'TOPLEFT', 16, -16)
+  headerFrame:SetPoint('RIGHT', frame, 'RIGHT', -16, 0)
+  headerFrame:SetHeight(32)
+  local hbg = headerFrame:CreateTexture(nil, 'BACKGROUND')
+  hbg:SetAllPoints(); hbg:SetColorTexture(0.1,0.1,0.12,0.6)
+  local titleFS = headerFrame:CreateFontString(nil, 'OVERLAY', 'GameFontNormalLarge')
+  titleFS:SetPoint('LEFT', headerFrame, 'LEFT', 8, 0)
+  titleFS:SetText('Active Prospects')
+  titleFS:SetTextColor(0.9,0.8,0.6)
+  local countFS = headerFrame:CreateFontString(nil, 'OVERLAY', 'GameFontHighlight')
+  countFS:SetPoint('RIGHT', headerFrame, 'RIGHT', -8, 0)
+  countFS:SetTextColor(0.7,0.7,0.9)
+  frame.countFS = countFS
+
+  -- Filter bar -------------------------------------------------------------
+  local bar = CreateFrame('Frame', nil, frame)
+  bar:SetPoint('TOPLEFT', headerFrame, 'BOTTOMLEFT', 0, -6)
+  bar:SetPoint('TOPRIGHT', headerFrame, 'BOTTOMRIGHT', 0, -6)
+  bar:SetHeight(26)
+  frame.filterBar = bar
+
+  local search = CreateFrame('EditBox', nil, bar)
+  search:SetSize(180,20); search:SetPoint('LEFT', bar, 'LEFT', 0, 0)
+  -- style input
+  if not search._styled then
+    local sb = search:CreateTexture(nil,'BACKGROUND'); sb:SetAllPoints(); sb:SetColorTexture(0.10,0.10,0.12,0.85); search._bg = sb
+    local bd = search:CreateTexture(nil,'BACKGROUND'); bd:SetPoint('TOPLEFT', 1, -1); bd:SetPoint('BOTTOMRIGHT', -1, 1); bd:SetColorTexture(0.35,0.35,0.40,0.9)
+  end
+  search:SetAutoFocus(false); search:SetText(state.search)
+  search:SetScript('OnTextChanged', function(self)
+    state.search = self:GetText() or ''
+    if frame.grid then frame.grid:SetFilter(buildFilterFn()) end
+  end)
+
+  -- Replace dropdown with a compact segmented control (buttons)
+  local seg = CreateFrame('Frame', nil, bar)
+  seg:SetPoint('LEFT', search, 'RIGHT', 8, 0)
+  seg:SetHeight(20)
+  local x = 0
+  for _,f in ipairs(STATUS_FILTERS) do
+    local b = CreateFrame('Button', nil, seg)
+    b:SetSize(70, 20)
+    b:SetPoint('LEFT', seg, 'LEFT', x, 0)
+    x = x + 72
+    b._bg = b:CreateTexture(nil,'BACKGROUND'); b._bg:SetAllPoints(); b._bg:SetColorTexture(0.16,0.16,0.18,0.85)
+    b._hl = b:CreateTexture(nil,'HIGHLIGHT'); b._hl:SetAllPoints(); b._hl:SetColorTexture(1,1,1,0.08)
+    local fs = b:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); fs:SetPoint('CENTER'); fs:SetText(f.label)
+    b._label = fs
+    b:SetScript('OnClick', function()
+      state.status = f.value
+      if frame.grid then frame.grid:SetFilter(buildFilterFn()); if frame.UpdateStatus then frame:UpdateStatus() end end
+      -- update visual selection
+      for _,child in ipairs({seg:GetChildren()}) do
+        if child._bg then child._bg:SetColorTexture(0.16,0.16,0.18, child==b and 0.95 or 0.85) end
+      end
+    end)
+  end
+
+  -- Bulk action buttons (right side of filter bar)
+  local bulk = CreateFrame('Frame', nil, bar)
+  bulk:SetPoint('RIGHT', bar, 'RIGHT', 0, 0)
+  bulk:SetSize(140, 20)
+
+  local inviteBtn = CreateFrame('Button', nil, bulk)
+  inviteBtn:SetSize(60,20)
+  inviteBtn:SetPoint('RIGHT', bulk, 'RIGHT', 0, 0)
+  inviteBtn:SetText('Invite')
+  if not inviteBtn._styled then
+    local ntex = inviteBtn:CreateTexture(nil,'BACKGROUND'); ntex:SetAllPoints(); ntex:SetColorTexture(0.18,0.18,0.22,0.85); inviteBtn:SetNormalTexture(ntex)
+    local ptex = inviteBtn:CreateTexture(nil,'BACKGROUND'); ptex:SetAllPoints(); ptex:SetColorTexture(0.28,0.28,0.34,0.95); inviteBtn:SetPushedTexture(ptex)
+    local htex = inviteBtn:CreateTexture(nil,'HIGHLIGHT'); htex:SetAllPoints(); htex:SetColorTexture(0.35,0.35,0.45,0.9); inviteBtn:SetHighlightTexture(htex)
+    inviteBtn._styled = true
+  end
+
+  local blBtn = CreateFrame('Button', nil, bulk)
+  blBtn:SetSize(70,20)
+  blBtn:SetPoint('RIGHT', inviteBtn, 'LEFT', -4, 0)
+  blBtn:SetText('Blacklist')
+  if not blBtn._styled then
+    local ntex = blBtn:CreateTexture(nil,'BACKGROUND'); ntex:SetAllPoints(); ntex:SetColorTexture(0.18,0.18,0.22,0.85); blBtn:SetNormalTexture(ntex)
+    local ptex = blBtn:CreateTexture(nil,'BACKGROUND'); ptex:SetAllPoints(); ptex:SetColorTexture(0.28,0.28,0.34,0.95); blBtn:SetPushedTexture(ptex)
+    local htex = blBtn:CreateTexture(nil,'HIGHLIGHT'); htex:SetAllPoints(); htex:SetColorTexture(0.35,0.35,0.45,0.9); blBtn:SetHighlightTexture(htex)
+    blBtn._styled = true
+  end
+
+  -- Grid container ---------------------------------------------------------
+  local gridParent = CreateFrame('Frame', nil, frame)
+  gridParent:SetPoint('TOPLEFT', bar, 'BOTTOMLEFT', 0, -8)
+  gridParent:SetPoint('BOTTOMRIGHT', frame, 'BOTTOMRIGHT', -8, 8)
+
+  local DataGrid = Addon.Get and (Addon.Get('UI.DataGrid') or Addon.require and Addon.require('UI.DataGrid'))
+  if not DataGrid then error('UI.DataGrid not available') end
+
+  -- Apply persisted column widths & sort
+  pcall(function()
+    local sv = Addon.Get and Addon.Get('SavedVarsService') or (Addon.require and Addon.require('SavedVarsService'))
+    if sv and sv.Get then
+      local widths = sv:Get('ui','prospectsColumns')
+      if type(widths)=='table' then
+        for _,col in ipairs(COLUMNS) do
+          local w = widths[col.key]
+          if type(w)=='number' and w>=24 and w<=600 then
+            ---@diagnostic disable-next-line: assign-type-mismatch
+            col.width = w
+          end
+        end
+      end
+      local sortState = sv:Get('ui','prospectsSort')
+      if type(sortState)=='table' then
+        state._initialSortKey = sortState.key
+        state._initialSortDesc = sortState.desc and true or false
+      end
+    end
+  end)
+
+  local grid = DataGrid:Create(gridParent, COLUMNS, {
+    multiSelect = true,
+    resizable = true,
+    onRenderRow = function(row, rec)
+      local cell = row.cols and row.cols.actions; if not cell then return end
+      cell.buttons = cell.buttons or {}
+      for _,b in ipairs(cell.buttons) do b:Hide() end
+      local idx = 0
+      local function make(label, r,g,b, cb, tooltip)
+        local btn = cell.buttons[idx+1]
+        if not btn then
+          btn = CreateFrame('Button', nil, cell)
+          cell.buttons[idx+1]=btn
+          btn:SetSize(24,18)
+        end
+        btn:SetPoint('LEFT', cell, 'LEFT', idx*26, 0)
+        btn:SetText(label)
+        local fs = btn:GetFontString(); fs:ClearAllPoints(); fs:SetPoint('CENTER'); fs:SetFont('Fonts/FRIZQT__.TTF', 10, '')
+        if r then fs:SetTextColor(r,g,b) else fs:SetTextColor(0.9,0.9,0.9) end
+        -- Pill style
+        if not btn._styled then
+          -- Replace panel template look with flat backplate without touching internal fields
+          local ntex = btn:CreateTexture(nil,'BACKGROUND')
+          ntex:SetAllPoints(); ntex:SetColorTexture(0.18,0.18,0.22,0.85)
+          btn._bg = ntex
+          btn:SetNormalTexture(ntex)
+          local ptex = btn:CreateTexture(nil,'BACKGROUND')
+          ptex:SetAllPoints(); ptex:SetColorTexture(0.28,0.28,0.34,0.95)
+          btn:SetPushedTexture(ptex)
+          local htex = btn:CreateTexture(nil,'HIGHLIGHT')
+          htex:SetAllPoints(); htex:SetColorTexture(0.35,0.35,0.45,0.9)
+          btn:SetHighlightTexture(htex)
+          btn._styled=true
+        end
+        btn:SetScript('OnClick', function() cb(rec) end)
+        if tooltip then
+          btn:SetScript('OnEnter', function(self)
+            GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:ClearLines(); GameTooltip:AddLine(tooltip,1,1,1); GameTooltip:Show()
+          end)
+          btn:SetScript('OnLeave', function() GameTooltip:Hide() end)
+        end
+        btn:Show(); idx=idx+1; return btn
+      end
+      make('I',0.3,1,0.3,function(r)
+        local inv=Addon.Get and Addon.Get('InviteService'); if inv and inv.InviteProspect and r.guid then inv:InviteProspect(r.guid) end
+      end,'Invite')
+      if rec.status=='Blacklisted' then
+        make('U',0.3,0.3,1,function(r) local pm=getProspectManager(); if pm and pm.Unblacklist and r.guid then pm:Unblacklist(r.guid) end end,'Unblacklist')
+      else
+        make('B',1,0.3,0.3,function(r) local pm=getProspectManager(); if pm and pm.Blacklist and r.guid then pm:Blacklist(r.guid,'manual') end end,'Blacklist')
+      end
+      make('X',0.8,0.8,0.8,function(r) local pm=getProspectManager(); if pm and pm.RemoveProspect and r.guid then pm:RemoveProspect(r.guid) end end,'Remove')
+
+      -- Row theming after actions built (match blacklist aesthetics)
+  -- Background now handled in rowStyler
+      -- Tooltips: status & last seen
+      if row.cols and row.cols.status and row.cols.status.text then
+        row.cols.status:SetScript('OnEnter', function(self)
+          if not rec then return end
+          GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:ClearLines()
+          GameTooltip:AddLine('Status: '..(rec.status or 'Unknown'),1,1,1)
+          if rec.blacklistReason then GameTooltip:AddLine('Reason: '..tostring(rec.blacklistReason),1,0.4,0.4) end
+          GameTooltip:Show()
+        end)
+        row.cols.status:SetScript('OnLeave', function() GameTooltip:Hide() end)
+      end
+      if row.cols and row.cols.lastSeen and row.cols.lastSeen.text then
+        row.cols.lastSeen:SetScript('OnEnter', function(self)
+          if not rec then return end
+            GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:ClearLines()
+            local ts = rec.lastSeen or 0
+            if ts>0 then
+              local DateFn = rawget(_G,'date') or function(_,t) return tostring(t or 0) end
+              GameTooltip:AddLine(DateFn('%Y-%m-%d %H:%M', ts),0.9,0.9,0.9)
+            else
+              GameTooltip:AddLine('Never seen',0.9,0.9,0.9)
+            end
+            GameTooltip:Show()
+        end)
+        row.cols.lastSeen:SetScript('OnLeave', function() GameTooltip:Hide() end)
+      end
+    end,
+    rowStyler = function(r, rec, i)
+      if not r._bg then return end
+      local alt = (i % 2)==0
+      local token = rec and rec.classToken
+      local c
+      if token and C_ClassColor and C_ClassColor.GetClassColor then c = C_ClassColor.GetClassColor(token) end
+      local baseR,baseG,baseB = 0.07,0.07,0.09
+      if rec and rec.status == 'Blacklisted' then
+        baseR,baseG,baseB = 0.32,0.05,0.05
+  elseif (c ~= nil) then
+        -- subtle blend toward class
+        baseR = baseR*0.4 + c.r*0.6
+        baseG = baseG*0.4 + c.g*0.6
+        baseB = baseB*0.4 + c.b*0.6
+      end
+      local a = alt and 0.40 or 0.48
+      r._bg:SetColorTexture(baseR,baseG,baseB,a)
+      -- thin class color strip on left
+      if not r._classStrip then
+        r._classStrip = r:CreateTexture(nil,'OVERLAY')
+        r._classStrip:SetPoint('TOPLEFT', r, 'TOPLEFT', 0, 0)
+        r._classStrip:SetPoint('BOTTOMLEFT', r, 'BOTTOMLEFT', 0, 0)
+        r._classStrip:SetWidth(2)
+      end
+  if (c ~= nil) then
+        r._classStrip:SetColorTexture(c.r,c.g,c.b,1)
+        r._classStrip:Show()
+      else
+        r._classStrip:Hide()
+      end
+    end
+    , onRowClick = function() if frame.UpdateStatus then frame:UpdateStatus() end end
   })
-  bgFrame:SetBackdropColor(0.05, 0.05, 0.08, 0.85) -- Dark semi-transparent
-  bgFrame:SetBackdropBorderColor(0.3, 0.3, 0.35, 0.8)
-  bgFrame:SetFrameLevel(f:GetFrameLevel() + 1)
-  f:SetFrameLevel(bgFrame:GetFrameLevel() + 1)
+  frame.grid = grid
+  grid:SetFilter(buildFilterFn())
+  if state._initialSortKey then
+    grid:SetSort(state._initialSortKey, state._initialSortDesc)
+  end
 
-  -- transient row-status map: guid -> { text, r,g,b, expiresAt }
-  f.recentStatus = {}
-
-  -- Filter Controls Container
-  local filterBar = CreateFrame("Frame", nil, f)
-  filterBar:SetPoint("TOPLEFT", PAD + 8, -PAD - 8)
-  filterBar:SetPoint("RIGHT", f, "RIGHT", -PAD - 8, 0)
-  filterBar:SetHeight(36)
-
-  -- Add a subtle background for the filter bar
-  local filterBg = filterBar:CreateTexture(nil, "BACKGROUND")
-  filterBg:SetAllPoints()
-  filterBg:SetColorTexture(0.1, 0.1, 0.12, 0.6)
-
-  -- Status Filter Label
-  local statusLabel = filterBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  statusLabel:SetPoint("LEFT", filterBar, "LEFT", 8, 0)
-  statusLabel:SetText("Show:")
-  statusLabel:SetTextColor(0.9, 0.8, 0.6) -- Gold tint
-
-  -- Status Filter Dropdown
-  local statusItems = {
-    {text = "Active Prospects", value = "Active"},
-    {text = "Blacklisted", value = "Blacklisted"},
-    {text = "All Prospects", value = "All"}
-  }
+  -- Style grid header columns to match blacklist palette
+  if grid.header and grid.header._colButtons then
+    for _,btn in ipairs(grid.header._colButtons) do
+      if btn.labelFS then btn.labelFS:SetTextColor(1,0.9,0.6) end
+    end
+    local rule = grid.header:CreateTexture(nil, 'BORDER')
+    rule:SetColorTexture(0.6,0.5,0.3,0.8)
+    rule:SetPoint('BOTTOMLEFT', grid.header, 'BOTTOMLEFT', 0, -2)
+    rule:SetPoint('BOTTOMRIGHT', grid.header, 'BOTTOMRIGHT', 0, -2)
+    rule:SetHeight(2)
+    grid.header:SetHeight(grid.header:GetHeight()+2)
+    local hb = grid.header:CreateTexture(nil,'BACKGROUND')
+    hb:SetAllPoints(); hb:SetColorTexture(0.15,0.12,0.08,0.8)
+  end
   
-  local statusDropdown = CreateFilterDropdown(filterBar, 140, statusItems, filterState.status, function(value)
-    filterState.status = value
-    f:Render()
+  -- Info bar / status summary
+  local info = CreateFrame('Frame', nil, frame)
+  info:SetPoint('BOTTOMLEFT', frame, 'BOTTOMLEFT', 8, 6)
+  info:SetPoint('BOTTOMRIGHT', frame, 'BOTTOMRIGHT', -8, 6)
+  info:SetHeight(18)
+  local statusFS = info:CreateFontString(nil, 'OVERLAY', 'GameFontNormalSmall')
+  statusFS:SetPoint('LEFT', info, 'LEFT', 0, 0)
+  statusFS:SetText('')
+  frame.statusFS = statusFS
+
+  function frame:UpdateStatus()
+    if not self.grid then return end
+    local total = #self.grid.data
+    local filtered = #self.grid.filtered
+    local selected = 0
+    for _ in pairs(self.grid.selection) do selected = selected + 1 end
+    local txt = string.format('Showing %d of %d', filtered, total)
+    if selected > 0 then txt = txt .. string.format('  (%d selected)', selected) end
+    if self.statusFS then self.statusFS:SetText(txt) end
+    if self.countFS then
+      local label = (state.status=='active' and 'Active') or (state.status=='blacklisted' and 'Blacklisted') or (state.status=='new' and 'New') or 'Total'
+      self.countFS:SetText(string.format('%s: %d', label, filtered))
+    end
+  end
+
+  -- Bulk button handlers (after UpdateStatus defined)
+  inviteBtn:SetScript('OnClick', function()
+    local selection = grid:GetSelection()
+    local invite = Addon.Get and Addon.Get('InviteService')
+    if invite and invite.InviteProspect then
+      for _,rec in ipairs(grid.data) do
+        if rec.guid and selection[rec.guid] then invite:InviteProspect(rec.guid) end
+      end
+    end
+    grid:ClearSelection(); frame:UpdateStatus()
   end)
-  statusDropdown:SetPoint("LEFT", statusLabel, "RIGHT", 10, -1)
-
-  -- Sort Label
-  local sortLabel = filterBar:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  sortLabel:SetPoint("LEFT", statusDropdown, "RIGHT", 25, 1)
-  sortLabel:SetText("Sort by:")
-  sortLabel:SetTextColor(0.9, 0.8, 0.6) -- Gold tint
-
-  -- Sort Dropdown
-  local sortItems = {
-    {text = "Name", value = "Name"},
-    {text = "Class", value = "Class"},
-    {text = "Level", value = "Level"},
-    {text = "Status", value = "Status"}
-  }
-  
-  local sortDropdown = CreateFilterDropdown(filterBar, 100, sortItems, filterState.sortBy, function(value)
-    filterState.sortBy = value
-    f:Render()
+  blBtn:SetScript('OnClick', function()
+    local selection = grid:GetSelection()
+    local pm = getProspectManager()
+    if pm and pm.Blacklist then
+      for _,rec in ipairs(grid.data) do
+        if rec.guid and selection[rec.guid] then pm:Blacklist(rec.guid, 'bulk') end
+      end
+    end
+    grid:ClearSelection(); frame:UpdateStatus()
   end)
-  sortDropdown:SetPoint("LEFT", sortLabel, "RIGHT", 10, -1)
 
-  -- Sort Direction Button
-  local sortDirBtn = ButtonLib and ButtonLib:Create(filterBar, { 
-    text = filterState.sortDesc and "↓" or "↑", 
-    variant = "subtle", 
-    size = "sm",
-    onClick = function(btn)
-      filterState.sortDesc = not filterState.sortDesc
-      btn:SetText(filterState.sortDesc and "↓" or "↑")
-      f:Render()
+  -- Skip auto-reset of filter to 'all' to reduce analyzer noise and keep user intent
+  function frame:RefreshData()
+    local provider = getProvider() or (Addon.require and Addon.require("ProspectsDataProvider"))
+    if not provider or not grid then return end
+    local list = (provider.GetAll and provider:GetAll()) or {}
+    grid:SetData(list)
+  -- Optional debug logging removed to keep analyzer clean
+    self:UpdateStatus()
+    if not frame._rowCountFS then
+      frame._rowCountFS = frame:CreateFontString(nil,'OVERLAY','GameFontNormalSmall')
+      frame._rowCountFS:SetPoint('BOTTOMRIGHT', frame, 'BOTTOMRIGHT', -10, 6)
+      frame._rowCountFS:SetTextColor(0.55,0.75,1)
     end
-  }) or CreateFrame("Button", nil, filterBar, "UIPanelButtonTemplate")
-  
-  sortDirBtn:SetPoint("LEFT", sortDropdown, "RIGHT", 8, 1)
-  sortDirBtn:SetSize(24, 24)
-  if not sortDirBtn._text then
-    sortDirBtn:SetText(filterState.sortDesc and "↓" or "↑")
-    sortDirBtn:SetScript("OnClick", function(btn)
-      filterState.sortDesc = not filterState.sortDesc
-      btn:SetText(filterState.sortDesc and "↓" or "↑")
-      f:Render()
+    frame._rowCountFS:SetText(string.format('Rows: %d', grid and #grid.filtered or 0))
+  end
+
+  function frame:ScheduleRefresh()
+    if frame._refreshScheduled then return end
+    frame._refreshScheduled = true
+    C_Timer.After(0.15, function()
+      frame._refreshScheduled = false
+      if frame:IsShown() then frame:RefreshData() end
     end)
   end
 
-  -- Results Count
-  local countLabel = filterBar:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  countLabel:SetPoint("RIGHT", filterBar, "RIGHT", -8, 0)
-  countLabel:SetTextColor(0.7, 0.7, 0.9) -- Light blue
-  f.countLabel = countLabel
-
-  -- Enhanced Header with better styling
-  local header = CreateFrame("Frame", nil, f)
-  header:SetPoint("TOPLEFT", PAD + 8, -PAD - 48) -- Offset for filter bar
-  header:SetPoint("RIGHT", f, "RIGHT", -PAD - 8, 0)
-  header:SetHeight(ROW_H + 4)
-  
-  -- Header background
-  local headerBg = header:CreateTexture(nil, "BACKGROUND")
-  headerBg:SetAllPoints()
-  headerBg:SetColorTexture(0.15, 0.12, 0.08, 0.8) -- Dark gold
-  
-  local columns = {
-    { label="#", width=36 }, 
-    { label="", width=26 }, 
-    { label="Name", width=150 },
-    { label="Class", width=110 }, 
-    { label="Level", width=60 },
-    { label="Status", width=80 },
-    { label="Source", width=100 }, 
-    { label="", width=28 }, 
-    { label="", width=28 },
-  }
-  
-  local x=8 -- Start with padding
-  for _, c in ipairs(columns) do
-    local t = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    t:SetPoint("LEFT", header, "LEFT", x, 0)
-    t:SetWidth(c.width)
-    t:SetText(c.label)
-    t:SetTextColor(1, 0.9, 0.6) -- Gold header text
-    x = x + c.width + 8
+  -- Events -----------------------------------------------------------------
+  local bus = getBus()
+  if bus and bus.Subscribe and not frame._subscribed then
+    frame._subscribed=true
+    bus:Subscribe('Prospects.Changed', function() frame:ScheduleRefresh() end, { namespace='UI.Prospects' })
+    -- Prefer namespaced events; generics still published but avoid duplicate subscriptions that spam refresh
+    bus:Subscribe('GuildRecruiter.ServicesReady', function() frame:ScheduleRefresh() end, { namespace='UI.Prospects.Boot' })
+    bus:Subscribe('GuildRecruiter.Ready', function() frame:ScheduleRefresh() end, { namespace='UI.Prospects.Boot' })
   end
-  
-  local rule = header:CreateTexture(nil, "BORDER")
-  rule:SetColorTexture(0.6, 0.5, 0.3, 0.8) -- Gold line
-  rule:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, -2)
-  rule:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", 0, -2)
-  rule:SetHeight(2)
+  frame:SetScript('OnShow', function() frame:RefreshData() end)
+  frame:SetScript('OnHide', function() local b=getBus(); if b and b.UnsubscribeNamespace then b:UnsubscribeNamespace('UI.Prospects') end end)
 
-  local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
-  scroll:SetPoint("TOPLEFT", PAD + 8, -PAD - 78) -- Offset for filter bar and header
-  scroll:SetPoint("BOTTOMRIGHT", -PAD - 24, PAD + 8)
-  local list = CreateFrame("Frame", nil, scroll)
-  list:SetSize(800, 400); scroll:SetScrollChild(list)
-  f.list, f.rows = list, {}
-
-  -- Rest of the implementation continues exactly as before...
-  -- [The rest of the function would be exactly the same as in the previous version]
-  
-  function f:SetStatusPill(guid, text, r, g, b, duration)
-    duration = tonumber(duration) or tonumber(Config and Config.Get and Config:Get("invitePillDuration", 3)) or 3
-    if duration < 0 then duration = 0 elseif duration > 10 then duration = 10 end
-    f.recentStatus[guid] = { text = text, r = r or 1, g = g or 1, b = b or 1, expiresAt = GetTime() + duration }
-    if not f._hasOnUpdate then
-      f._hasOnUpdate = true
-      f:SetScript("OnUpdate", function(self)
-        local now = GetTime()
-        local active = false
-        for _, st in pairs(self.recentStatus) do
-          if st and (now < (st.expiresAt or 0)) then active = true break end
-        end
-        if not active then
-          self:SetScript("OnUpdate", nil); self._hasOnUpdate = false
-        end
-      end)
-    end
-    if f:IsShown() then f:Render() end
-  end
-
-  function f:Render()
-    local data = buildFilteredSortedList(Recruiter)
-    local y, shown = 0, 0
-    local now = GetTime()
-    
-    -- Update count label
-    local totalCount = 0
-    if Recruiter and Recruiter.GetAllGuids then
-      totalCount = #(Recruiter:GetAllGuids() or {})
-    end
-    f.countLabel:SetText(string.format("Showing: %d/%d", #data, totalCount))
-
-    for i, p in ipairs(data) do
-      local row = self.rows[i]
-      if not row then
-        row = CreateFrame("Frame", nil, list); row:SetSize(820, ROW_H)
-        
-        -- Enhanced row background
-        row.bg = row:CreateTexture(nil, "BACKGROUND")
-        row.bg:SetAllPoints()
-        
-        -- Add subtle border
-        row.border = row:CreateTexture(nil, "BORDER")
-        row.border:SetHeight(1)
-        row.border:SetPoint("BOTTOMLEFT")
-        row.border:SetPoint("BOTTOMRIGHT")
-        row.border:SetColorTexture(0.3, 0.3, 0.35, 0.4)
-        
-        local colX = 8 -- Start with padding
-
-        row.c1 = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        row.c1:SetPoint("LEFT", row, "LEFT", colX, 0); row.c1:SetWidth(columns[1].width); colX = colX + columns[1].width + 8
-
-        row.classIcon = row:CreateTexture(nil, "ARTWORK")
-        row.classIcon:SetPoint("LEFT", row, "LEFT", colX, 0); row.classIcon:SetSize(22,22); colX = colX + columns[2].width + 8
-
-        row.nameFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        row.nameFS:SetPoint("LEFT", row, "LEFT", colX, 0); row.nameFS:SetWidth(columns[3].width)
-        
-        -- pill next to name
-        row.statusFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        row.statusFS:SetPoint("LEFT", row.nameFS, "RIGHT", 6, 0); row.statusFS:SetText(""); row.statusFS:Hide()
-        colX = colX + columns[3].width + 8
-
-        row.classFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        row.classFS:SetPoint("LEFT", row, "LEFT", colX, 0); row.classFS:SetWidth(columns[4].width); colX = colX + columns[4].width + 8
-
-        row.levelFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        row.levelFS:SetPoint("LEFT", row, "LEFT", colX, 0); row.levelFS:SetWidth(columns[5].width); colX = colX + columns[5].width + 8
-
-        row.statusColFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        row.statusColFS:SetPoint("LEFT", row, "LEFT", colX, 0); row.statusColFS:SetWidth(columns[6].width); colX = colX + columns[6].width + 8
-
-        row.srcFS = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        row.srcFS:SetPoint("LEFT", row, "LEFT", colX, 0); row.srcFS:SetWidth(columns[7].width); colX = colX + columns[7].width + 8
-
-        row.inviteBtn = (ButtonLib and ButtonLib:Create(row, { text="+", variant="primary", size="sm" })) or CreateFrame("Button", nil, row)
-        row.inviteBtn:SetPoint("LEFT", row, "LEFT", colX, -2)
-        row.inviteBtn:SetSize(26,22)
-        if not row.inviteBtn._text then
-          row.inviteBtn.icon = row.inviteBtn:CreateTexture(nil, "ARTWORK")
-          row.inviteBtn.icon:SetAllPoints(); row.inviteBtn.icon:SetTexture(INVITE_ICON)
-        end
-        colX = colX + columns[8].width + 8
-
-        row.removeBtn = (ButtonLib and ButtonLib:Create(row, { text="×", variant="danger", size="sm" })) or CreateFrame("Button", nil, row)
-        row.removeBtn:SetPoint("LEFT", row, "LEFT", colX, -2)
-        row.removeBtn:SetSize(26,22)
-        if not row.removeBtn._text then
-          row.removeBtn.icon = row.removeBtn:CreateTexture(nil, "ARTWORK")
-          row.removeBtn.icon:SetAllPoints(); row.removeBtn.icon:SetTexture(REMOVE_ICON)
-        end
-
-        -- cooldown state
-        row.inviteCooldownEnd = 0
-        row.inviteBtn:SetMotionScriptsWhileDisabled(true)
-        
-        self.rows[i] = row
-      end
-
-      -- Set all the row data and styling...
-      row:SetPoint("TOPLEFT", 0, y)
-      
-      -- Determine if this prospect is blacklisted
-      local isBlacklisted = p.status == "Blacklisted"
-
-      -- Enhanced row styling
-      local st = f.recentStatus[p.guid]
-      local active = st and now < (st.expiresAt or 0)
-      if active then
-        row.statusFS:SetText(st.text or "")
-        row.statusFS:SetTextColor(st.r or 1, st.g or 1, st.b or 1)
-        row.statusFS:Show()
-        row.bg:SetColorTexture(0.2, 0.7, 0.2, 0.25) -- Green highlight for active status
-      else
-        row.statusFS:Hide()
-        if isBlacklisted then
-          row.bg:SetColorTexture(0.6, 0.2, 0.2, 0.2) -- Red tint for blacklisted
-        else
-          local alpha = (i%2==1) and 0.15 or 0.08
-          row.bg:SetColorTexture(0.1, 0.1, 0.12, alpha) -- Dark alternating rows
-        end
-      end
-
-      row.c1:SetText(tostring(i))
-      row.c1:SetTextColor(0.8, 0.8, 0.9)
-
-      local token = p.classFile and p.classFile:upper() or nil
-      if token and CLASS_TCOORDS and CLASS_TCOORDS[token] then
-        row.classIcon:SetTexture(CLASS_TEX)
-        row.classIcon:SetTexCoord(unpack(CLASS_TCOORDS[token]))
-        row.classIcon:SetDesaturated(isBlacklisted)
-        row.classIcon:Show()
-      else
-        row.classIcon:Hide()
-      end
-
-      local r,g,b = classRGB(token)
-      row.nameFS:SetText(p.name or "?")
-      if isBlacklisted then
-        row.nameFS:SetTextColor(0.6, 0.6, 0.6) -- Grayed out for blacklisted
-      else
-        row.nameFS:SetTextColor(r,g,b)
-      end
-      
-      row.classFS:SetText(p.class or (token or "?"))
-      if isBlacklisted then
-        row.classFS:SetTextColor(0.6, 0.6, 0.6)
-      else
-        row.classFS:SetTextColor(r,g,b)
-      end
-
-      local lvl = tonumber(p.level) or 0
-      row.levelFS:SetText(tostring(lvl))
-      if isBlacklisted then
-        row.levelFS:SetTextColor(0.6, 0.6, 0.6)
-      else
-        local my  = UnitLevel("player") or lvl
-        local diff = my - lvl
-        if lvl == my then 
-          row.levelFS:SetTextColor(1,.82,0)
-        elseif diff > 4 then 
-          row.levelFS:SetTextColor(.55,.55,.55)
-        elseif diff > 0 then 
-          row.levelFS:SetTextColor(0,1,0)
-        else 
-          row.levelFS:SetTextColor(1,.5,.25) 
-        end
-      end
-
-      -- Enhanced Status column
-      if isBlacklisted then
-        row.statusColFS:SetText("Blacklisted")
-        row.statusColFS:SetTextColor(1, 0.4, 0.4)
-      else
-        row.statusColFS:SetText("Active")
-        row.statusColFS:SetTextColor(0.4, 1, 0.4)
-      end
-
-      row.srcFS:SetText(p.source or "")
-      if isBlacklisted then
-        row.srcFS:SetTextColor(0.6, 0.6, 0.6)
-      else
-        row.srcFS:SetTextColor(0.8, 0.8, 0.9)
-      end
-
-      row:Show(); y = y - ROW_H
-      shown = shown + 1
-    end
-    for i = shown + 1, #self.rows do self.rows[i]:Hide() end
-    list:SetHeight(math.max(ROW_H * shown, 1))
-  end
-
-  -- Event hooks
-  if Bus and Bus.Subscribe then
-    Bus:Subscribe("Recruiter.ProspectQueued",  function() if f:IsShown() then f:Render() end end)
-    Bus:Subscribe("Recruiter.ProspectUpdated", function() if f:IsShown() then f:Render() end end)
-    Bus:Subscribe("Recruiter.Blacklisted",     function() if f:IsShown() then f:Render() end end)
-    Bus:Subscribe("BlacklistUpdated",          function() if f:IsShown() then f:Render() end end)
-
-    Bus:Subscribe("InviteService.Invited", function(_, guid)
-      if not guid then return end
-      local dur = tonumber(Config and Config.Get and Config:Get("invitePillDuration", 3)) or 3
-      if dur < 0 then dur = 0 elseif dur > 10 then dur = 10 end
-      f:SetStatusPill(guid, "Invited", 0, 1, 0, dur)
-    end)
-
-    Bus:Subscribe("InviteService.InviteFailed", function(_, guid, _, err)
-      if not guid then return end
-      local dur = tonumber(Config and Config.Get and Config:Get("invitePillDuration", 3)) or 3
-      if dur < 0 then dur = 0 elseif dur > 10 then dur = 10 end
-      f:SetStatusPill(guid, "Failed", 1, 0.25, 0.25, dur)
-      if err then toast(("Invite failed: %s"):format(tostring(err)), 1, 0.25, 0.25) end
-    end)
-  end
-
-  local originalShow = f.Show
-  f.Show = function(self)
-    self:Render()
-    if originalShow then originalShow(self) end
-  end
-  return f
+  frame:RefreshData()
+  getLogger():Info('Prospects DataGrid ready')
+  frame:UpdateStatus()
+  return frame
 end
 
-Addon.provide("UI.Prospects", M)
+if Addon.provide then Addon.provide('UI.Prospects', M, { meta = { layer = 'UI', area = 'prospects' } }) end
 return M
