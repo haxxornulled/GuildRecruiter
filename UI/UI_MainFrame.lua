@@ -490,11 +490,24 @@ function UI:Build()
       collapsedBar:SetScript("OnEnter", function()
         if sidebarCollapsed and not sidebarHoverExpanded then
           sidebarHoverExpanded = true
+          -- When expanding from a flush-collapsed state, restore the normal 6px left offset
+          if sidebar and sidebar.ClearAllPoints then
+            sidebar:ClearAllPoints()
+            sidebar:SetPoint("TOPLEFT", 6, -42)
+            sidebar:SetPoint("BOTTOMLEFT", 6, 10)
+          end
           if UIHelpers and UIHelpers.SlideWidth then
             UIHelpers.SlideWidth(sidebar, sidebar:GetWidth(), sidebarWidth, SIDEBAR.SLIDE_DUR, nil, function() end)
             if UIHelpers.Fade then UIHelpers.Fade(sidebar, 1.0, 0.10) end
           else
             sidebar:SetWidth(sidebarWidth)
+          end
+          if sidebar and sidebar._GR_Glass then sidebar._GR_Glass:SetAlpha(1.0) end
+          -- When expanding, restore standard content gap
+          if contentParent and contentParent.ClearAllPoints then
+            contentParent:ClearAllPoints()
+            contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 8, 0)
+            contentParent:SetPoint("BOTTOMRIGHT", -12, 10)
           end
           if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(true) end
         end
@@ -512,6 +525,20 @@ function UI:Build()
             if UIHelpers.Fade then UIHelpers.Fade(sidebar, 0.35, 0.12) end
           else
             sidebar:SetWidth(COLLAPSED.WIDTH); sidebarHoverExpanded=false
+          end
+          -- Move the collapsed sidebar flush to the main frame's left edge (no outer margin)
+          if sidebar and sidebar.ClearAllPoints then
+            sidebar:ClearAllPoints()
+            sidebar:SetPoint("TOPLEFT", 0, -42)
+            sidebar:SetPoint("BOTTOMLEFT", 0, 10)
+          end
+          if sidebar and sidebar._GR_Glass then sidebar._GR_Glass:SetAlpha(0.0) end
+          -- When collapsing back, remove content gap
+          if contentParent and contentParent.ClearAllPoints then
+            contentParent:ClearAllPoints()
+            -- Anchor to sidebar's right edge with 0px offset for a flush join
+            contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 0, 0)
+            contentParent:SetPoint("BOTTOMRIGHT", -12, 10)
           end
           if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(false) end
         end
@@ -549,11 +576,23 @@ function UI:Build()
           if baseCollapsed then
             -- temporarily show the panel, but do not change base setting; user can click toggle to lock
             sidebarHoverExpanded = true
+            -- Restore the normal 6px left offset while temporarily expanded
+            if sidebar and sidebar.ClearAllPoints then
+              sidebar:ClearAllPoints()
+              sidebar:SetPoint("TOPLEFT", 6, -42)
+              sidebar:SetPoint("BOTTOMLEFT", 6, 10)
+            end
             if UIHelpers and UIHelpers.SlideWidth then
               UIHelpers.SlideWidth(sidebar, sidebar:GetWidth(), sidebarWidth, SIDEBAR.SLIDE_DUR)
               if UIHelpers.Fade then UIHelpers.Fade(sidebar, 1.0, 0.10) end
             else
               sidebar:SetWidth(sidebarWidth)
+            end
+            if sidebar and sidebar._GR_Glass then sidebar._GR_Glass:SetAlpha(1.0) end
+            if contentParent and contentParent.ClearAllPoints then
+              contentParent:ClearAllPoints()
+              contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 8, 0)
+              contentParent:SetPoint("BOTTOMRIGHT", -12, 10)
             end
             if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(true) end
           end
@@ -652,6 +691,28 @@ function UI:Build()
         sidebarCollapsed = collapsed
         if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(not collapsed) end
         if collapsedBar then collapsedBar:SetShown(collapsed) end
+        -- Re-anchor sidebar and content to eliminate any left gap when collapsed
+    if sidebar and sidebar.ClearAllPoints then
+          sidebar:ClearAllPoints()
+          if collapsed then
+            sidebar:SetPoint("TOPLEFT", 0, -42)
+            sidebar:SetPoint("BOTTOMLEFT", 0, 10)
+          else
+            sidebar:SetPoint("TOPLEFT", 6, -42)
+            sidebar:SetPoint("BOTTOMLEFT", 6, 10)
+          end
+        end
+        if contentParent and contentParent.ClearAllPoints then
+          contentParent:ClearAllPoints()
+          if collapsed then
+      -- Anchor to sidebar's right edge with 0px offset when collapsed for a flush join
+      contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 0, 0)
+          else
+            contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 8, 0)
+          end
+          contentParent:SetPoint("BOTTOMRIGHT", -12, 10)
+        end
+    if sidebar and sidebar._GR_Glass then sidebar._GR_Glass:SetAlpha(collapsed and 0.0 or 1.0) end
         updateLabel()
         -- persist
         local S = (Addon.Get and Addon.Get("SavedVarsService")) or (Addon.require and Addon.require("SavedVarsService"))
@@ -798,10 +859,32 @@ function UI:Build()
         sidebar:SetWidth(COLLAPSED.WIDTH)
         if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(false) end
         if collapsedBar then collapsedBar:Show() end
+        if sidebar and sidebar.ClearAllPoints then
+          sidebar:ClearAllPoints()
+          sidebar:SetPoint("TOPLEFT", 0, -42)
+          sidebar:SetPoint("BOTTOMLEFT", 0, 10)
+        end
+        if contentParent and contentParent.ClearAllPoints then
+          contentParent:ClearAllPoints()
+          contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 0, 0)
+          contentParent:SetPoint("BOTTOMRIGHT", -12, 10)
+        end
+        if sidebar and sidebar._GR_Glass then sidebar._GR_Glass:SetAlpha(0.0) end
       else
         sidebar:SetWidth(sidebarWidth)
         if sidebar._scroll and sidebar._scroll.SetShown then sidebar._scroll:SetShown(true) end
         if collapsedBar then collapsedBar:Hide() end
+        if sidebar and sidebar.ClearAllPoints then
+          sidebar:ClearAllPoints()
+          sidebar:SetPoint("TOPLEFT", 6, -42)
+          sidebar:SetPoint("BOTTOMLEFT", 6, 10)
+        end
+        if contentParent and contentParent.ClearAllPoints then
+          contentParent:ClearAllPoints()
+          contentParent:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 8, 0)
+          contentParent:SetPoint("BOTTOMRIGHT", -12, 10)
+        end
+        if sidebar and sidebar._GR_Glass then sidebar._GR_Glass:SetAlpha(1.0) end
       end
     end
     applyBoot(collapsed)
