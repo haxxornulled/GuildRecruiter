@@ -792,11 +792,50 @@ function UI:Build()
         f:SetPoint("RIGHT", contentParent, "RIGHT", 0, 0)
         f:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, 0)
       end
+      -- Helper to slide chat off/on canvas by animating bottom offset
+      local chatBottomOffset = 0
+      local function setBottomOffset(v)
+        chatBottomOffset = v or 0
+        if not f or not f.SetPoint then return end
+        f:ClearAllPoints()
+        f:SetPoint("LEFT", contentParent, "LEFT", 0, 0)
+        f:SetPoint("RIGHT", contentParent, "RIGHT", 0, 0)
+        f:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, chatBottomOffset)
+      end
+      local function slideChat(collapsed, animated)
+        if not f then return end
+        local h = math.floor((f:GetHeight() or 180) + 6)
+        local target = collapsed and -h or 0
+        local from = chatBottomOffset or 0
+        local apply = function(v) setBottomOffset(v) end
+        local finish = function()
+          setBottomOffset(target)
+          if not collapsed and f.Show then f:Show() end
+          if collapsed and f.Hide then f:Hide() end
+        end
+        -- Ensure it's shown during slide-in so it animates visibly
+        if not collapsed and f.Show then f:Show() end
+        if animated and UIHelpers and UIHelpers.AnimateNumber then
+          UIHelpers.AnimateNumber(from, target, 0.18, apply, finish)
+        else
+          finish()
+        end
+      end
       -- Load persisted collapsed state
       local SV = Addon.Get and Addon.Get("SavedVarsService")
       local state = (SV and SV.Get and SV:Get("ui", "chatMiniCollapsed", false)) or false
       chatMiniCollapsed = not not state
-      if f and f.SetShown then f:SetShown(not chatMiniCollapsed) end
+      -- Position based on saved state; defer to allow measurable height
+      if f then
+        C_Timer.After(0.01, function()
+          if chatMiniCollapsed then
+            -- place off-canvas and hide to avoid click-through
+            setBottomOffset(-math.floor((f:GetHeight() or 180) + 6)); if f.Hide then f:Hide() end
+          else
+            setBottomOffset(0); if f.Show then f:Show() end
+          end
+        end)
+      end
       -- Toggle button near sidebar toggle (unified control area)
   local tbtn = CreateFrame("Button", nil, mainFrame)
   tbtn:SetSize(28, 28)
@@ -819,29 +858,8 @@ function UI:Build()
       updateLabel()
       tbtn:SetScript("OnClick", function()
         chatMiniCollapsed = not chatMiniCollapsed
-        if chatMiniCollapsed then
-          if f and f.SetShown then f:SetShown(false) end
-        else
-          -- Ensure overlay is hidden and the chat is reparented and anchored to the main content
-          pcall(function()
-            local O = (Addon.Get and Addon.Get('UI.ChatOverlay')) or (Addon.require and Addon.require('UI.ChatOverlay'))
-            if O and O.Hide then O:Hide() end
-          end)
-          pcall(function()
-            local ChatPanel = Addon.Get and Addon.Get("UI.ChatPanel") or (Addon.require and Addon.require("UI.ChatPanel"))
-            if ChatPanel and ChatPanel.Attach and contentParent then
-              local cp = ChatPanel:Attach(contentParent)
-              local cf = cp and cp.Frame
-              if cf and cf.SetPoint then
-                cf:ClearAllPoints()
-                cf:SetPoint("LEFT", contentParent, "LEFT", 0, 0)
-                cf:SetPoint("RIGHT", contentParent, "RIGHT", 0, 0)
-                cf:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, 0)
-                if cf.Show then cf:Show() end
-              end
-            end
-          end)
-        end
+  -- Never undock on toggle; simply slide off/on canvas
+  slideChat(chatMiniCollapsed, true)
         updateLabel()
         local S = (Addon.Get and Addon.Get("SavedVarsService")) or (Addon.require and Addon.require("SavedVarsService"))
         if S and S.Set then S:Set("ui", "chatMiniCollapsed", chatMiniCollapsed); if S.Sync then S:Sync() end end
@@ -909,10 +927,18 @@ function UI:Show()
         f:ClearAllPoints()
         f:SetPoint("LEFT", contentParent, "LEFT", 0, 0)
         f:SetPoint("RIGHT", contentParent, "RIGHT", 0, 0)
-        f:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, 0)
+        -- Respect collapsed state by positioning off-canvas when collapsed
+        local h = math.floor((f:GetHeight() or 180) + 6)
+        if chatMiniCollapsed then
+          f:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, -h)
+          if f.Hide then f:Hide() end
+        else
+          f:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, 0)
+          if f.Show then f:Show() end
+        end
   if f.SetFrameStrata then f:SetFrameStrata("MEDIUM") end
   if f.SetFrameLevel and contentParent and contentParent.GetFrameLevel then f:SetFrameLevel(contentParent:GetFrameLevel() + 1) end
-        if f.SetShown then f:SetShown(not chatMiniCollapsed) end
+        -- visibility handled above to avoid click-through while off-canvas
       end
     end
   end)
