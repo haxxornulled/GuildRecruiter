@@ -5,6 +5,8 @@
 local __args = {...}; local ADDON_NAME, Addon = __args[1], (__args[2] or {})
 
 local UI = {}
+-- Keep a single chat panel instance across attachments
+local _instance = nil
 
 local function CreateChatPanel(parent)
   local frame = CreateFrame('Frame', nil, parent)
@@ -451,7 +453,14 @@ end
 -- Accept both ChatPanel.Attach(parent) and ChatPanel:Attach(parent)
 function UI.Attach(selfOrParent, maybeParent)
   local parent = maybeParent or selfOrParent
-  return CreateChatPanel(parent)
+  if not _instance then
+    _instance = CreateChatPanel(parent)
+  else
+    -- Re-parent existing frame; callers will handle anchoring
+    local f = _instance and _instance.Frame
+    if f and f.SetParent then f:SetParent(parent) end
+  end
+  return _instance
 end
 
 if Addon.provide then

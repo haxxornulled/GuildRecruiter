@@ -758,7 +758,29 @@ function UI:Build()
       updateLabel()
       tbtn:SetScript("OnClick", function()
         chatMiniCollapsed = not chatMiniCollapsed
-        if f and f.SetShown then f:SetShown(not chatMiniCollapsed) end
+        if chatMiniCollapsed then
+          if f and f.SetShown then f:SetShown(false) end
+        else
+          -- Ensure overlay is hidden and the chat is reparented and anchored to the main content
+          pcall(function()
+            local O = (Addon.Get and Addon.Get('UI.ChatOverlay')) or (Addon.require and Addon.require('UI.ChatOverlay'))
+            if O and O.Hide then O:Hide() end
+          end)
+          pcall(function()
+            local ChatPanel = Addon.Get and Addon.Get("UI.ChatPanel") or (Addon.require and Addon.require("UI.ChatPanel"))
+            if ChatPanel and ChatPanel.Attach and contentParent then
+              local cp = ChatPanel:Attach(contentParent)
+              local cf = cp and cp.Frame
+              if cf and cf.SetPoint then
+                cf:ClearAllPoints()
+                cf:SetPoint("LEFT", contentParent, "LEFT", 0, 0)
+                cf:SetPoint("RIGHT", contentParent, "RIGHT", 0, 0)
+                cf:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, 0)
+                if cf.Show then cf:Show() end
+              end
+            end
+          end)
+        end
         updateLabel()
         local S = (Addon.Get and Addon.Get("SavedVarsService")) or (Addon.require and Addon.require("SavedVarsService"))
         if S and S.Set then S:Set("ui", "chatMiniCollapsed", chatMiniCollapsed); if S.Sync then S:Sync() end end
@@ -794,6 +816,23 @@ function UI:Show()
     if O and O.Hide then O:Hide() end
   end)
   if not mainFrame then UI:Build() end
+  -- Ensure the shared ChatPanel is re-parented back to the main content area
+  pcall(function()
+    local ChatPanel = Addon.Get and Addon.Get("UI.ChatPanel") or (Addon.require and Addon.require("UI.ChatPanel"))
+    if ChatPanel and ChatPanel.Attach and contentParent then
+      local cp = ChatPanel:Attach(contentParent)
+      local f = cp and cp.Frame
+      if f and f.SetPoint then
+        f:ClearAllPoints()
+        f:SetPoint("LEFT", contentParent, "LEFT", 0, 0)
+        f:SetPoint("RIGHT", contentParent, "RIGHT", 0, 0)
+        f:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, 0)
+  if f.SetFrameStrata then f:SetFrameStrata("MEDIUM") end
+  if f.SetFrameLevel and contentParent and contentParent.GetFrameLevel then f:SetFrameLevel(contentParent:GetFrameLevel() + 1) end
+        if f.SetShown then f:SetShown(not chatMiniCollapsed) end
+      end
+    end
+  end)
   if mainFrame ~= nil then mainFrame:Show() end
 end
 

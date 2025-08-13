@@ -65,7 +65,7 @@ local function build()
     end
   end)
 
-  -- Embed the existing ChatPanel
+  -- Embed the shared ChatPanel singleton
   local ChatPanel = (Addon.Get and Addon.Get('UI.ChatPanel')) or (Addon.require and Addon.require('UI.ChatPanel'))
   if ChatPanel and ChatPanel.Attach then
     content = ChatPanel:Attach(overlayFrame)
@@ -74,6 +74,7 @@ local function build()
       f:ClearAllPoints()
       f:SetPoint('TOPLEFT', overlayFrame, 'TOPLEFT', 6, -6)
       f:SetPoint('BOTTOMRIGHT', overlayFrame, 'BOTTOMRIGHT', -6, 6)
+      if f.Show then f:Show() end
     end
   end
 
@@ -108,10 +109,12 @@ function M:Show()
     local UIM = Addon.UI and Addon.UI.Main
     if UIM and UIM.Hide then UIM:Hide() end
   end)
+  -- Ensure the chat content is visible inside the overlay
+  if content and content.Frame and content.Frame.Show then content.Frame:Show() end
   if overlayFrame then overlayFrame:Show() end
 end
 function M:Hide() if overlayFrame then overlayFrame:Hide() end end
 function M:Toggle() if not isBuilt then build() end; if overlayFrame then if overlayFrame:IsShown() then overlayFrame:Hide() else overlayFrame:Show() end end end
 
-if Addon.provide then Addon.provide('UI.ChatOverlay', M, { lifetime='SingleInstance', meta = { layer='UI', area='chat' } }) end
+if Addon.provide then Addon.provide('UI.ChatOverlay', M, { lifetime = 'SingleInstance', meta = { layer = 'UI', area = 'chat' } }) end
 return M
