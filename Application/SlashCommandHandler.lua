@@ -35,6 +35,7 @@ function Handler:Help()
   return {
     " /gr ui|toggle        - Open the main UI",
     " /gr settings         - Open settings panel",
+  " /gr roster           - Open the Guild Roster panel",
   " /gr log [toggle|show|hide|clear] - Log console",
     " /gr messages add N   - Add rotation message N (creates new section)",
     " /gr messages remove N- Remove rotation message N ( >3 core protected)",
@@ -52,6 +53,13 @@ function Handler:Handle(msg)
   msg = tostring(msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
   if msg == "" or msg == "ui" or msg == "toggle" then
     local ui = UI(); if ui and ui.Show then ui:Show() else printf("Main UI not ready yet.") end; return
+  elseif msg == "roster" then
+    local ui = UI(); if not ui then printf("UI not ready yet."); return end
+    -- Ensure category exists then select it
+    if ui.AddCategory then pcall(ui.AddCategory, ui, { key = "roster", label = "Guild Roster", order = 15 }) end
+    if ui.SelectCategoryByKey then pcall(ui.SelectCategoryByKey, ui, "roster") end
+    if ui.Show then pcall(ui.Show, ui) end
+    return
   elseif msg == "settings" or msg == "options" then
     local id = Addon._OptionsCategoryID or "Guild Recruiter"
     if Settings and Settings.OpenToCategory then Settings.OpenToCategory(id) else printf("Settings not available.") end
