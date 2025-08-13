@@ -858,8 +858,25 @@ function UI:Build()
       updateLabel()
       tbtn:SetScript("OnClick", function()
         chatMiniCollapsed = not chatMiniCollapsed
-  -- Never undock on toggle; simply slide off/on canvas
-  slideChat(chatMiniCollapsed, true)
+        if not chatMiniCollapsed then
+          -- Expanding: guarantee re-dock before sliding back in
+          pcall(function()
+            local O = (Addon.Get and Addon.Get('UI.ChatOverlay')) or (Addon.require and Addon.require('UI.ChatOverlay'))
+            if O and O.Hide then O:Hide() end
+          end)
+          pcall(function()
+            local ChatPanel = Addon.Get and Addon.Get("UI.ChatPanel") or (Addon.require and Addon.require("UI.ChatPanel"))
+            if ChatPanel and ChatPanel.Attach and contentParent then
+              local cp = ChatPanel:Attach(contentParent)
+              if cp and cp.Frame then
+                f = cp.Frame
+                setBottomOffset(chatBottomOffset or 0)
+              end
+            end
+          end)
+        end
+        -- Never undock on toggle; simply slide off/on canvas
+        slideChat(chatMiniCollapsed, true)
         updateLabel()
         local S = (Addon.Get and Addon.Get("SavedVarsService")) or (Addon.require and Addon.require("SavedVarsService"))
         if S and S.Set then S:Set("ui", "chatMiniCollapsed", chatMiniCollapsed); if S.Sync then S:Sync() end end
