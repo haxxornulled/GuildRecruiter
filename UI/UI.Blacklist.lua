@@ -97,7 +97,7 @@ function M:Create(parent)
   local PM = getPM()
   local Bus = Addon.EventBus
   local Log = Addon.Logger and Addon.Logger:ForContext("UI.Blacklist")
-  local ButtonLib = Addon.require and (Addon.require("UI.ButtonLib") or Addon.require("Tools.ButtonLib"))
+  local ButtonLib = Addon.require and Addon.require("Tools.ButtonLib")
 
   -- Add semi-transparent background to reduce dragonfly interference (same as Prospects)
   local bgFrame = CreateFrame("Frame", nil, f, "BackdropTemplate")

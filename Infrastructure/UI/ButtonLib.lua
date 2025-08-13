@@ -1,12 +1,12 @@
--- Infrastructure/UI/ButtonLib.lua — skinnable button helper
-local __p = { ... }
-local ADDON_NAME, Addon = __p[1], (__p[2] or {})
--- Map the existing Tools.ButtonLib to a UI-scoped DI key for cleanliness.
--- Use a lazy resolver to avoid load-order coupling. Do NOT call Addon.require at file load.
-if Addon.provide and not (Addon.IsProvided and Addon.IsProvided('UI.ButtonLib')) then
-  Addon.provide('UI.ButtonLib', function()
-    return (Addon.Get and Addon.Get('Tools.ButtonLib')) -- lazy/safe
-  end, { lifetime='SingleInstance' })
+-- Infrastructure/UI/ButtonLib.lua
+-- Thin DI shim that exposes Tools.ButtonLib under UI.ButtonLib for UI code.
+local ADDON_NAME, Addon = ...
+Addon = Addon or _G[ADDON_NAME] or {}
+
+if Addon and Addon.safeProvide and not (Addon.IsProvided and Addon.IsProvided('UI.ButtonLib')) then
+  Addon.safeProvide('UI.ButtonLib', function(sc)
+    return sc:Resolve('Tools.ButtonLib')
+  end, { lifetime = 'SingleInstance', meta = { layer = 'UI', area = 'shim', alias = true } })
 end
--- No immediate return that forces DI resolution at load time.
--- The UI.ButtonLib will be resolved via DI (Addon.require('UI.ButtonLib')) when needed.
+
+return true

@@ -42,6 +42,20 @@ function Bootstrap.Run(cfg)
             log("✗ Failed " .. spec.key .. ": " .. tostring(err))
         end
     end
+    -- Build the DI container (lazily) so diagnostics like ListRegistered can see keys.
+    -- This keeps behavior lazy for all other services while ensuring Core._container exists.
+    do
+        local okBuild, errBuild = pcall(function()
+            if type(Addon.require) == "function" then
+                Addon.require("Core") -- minimal resolve triggers container build
+            end
+        end)
+        if okBuild then
+            log("✓ Container built")
+        else
+            log("⚠ Container build failed: " .. tostring(errBuild))
+        end
+    end
     if cfg.skipResolve then
         log("Phase 2: Eager resolve skipped (lazy by default)")
     else

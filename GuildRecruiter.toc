@@ -11,14 +11,15 @@
 Core/Core.lua
 Core/OOP/Class.lua
 Core/OOP/Interface.lua
-Core/Contracts/IProspectsService.lua
-Core/Contracts/IInviteService.lua
-Core/Contracts/IEventBus.lua
-Core/Contracts/IScheduler.lua
-Core/Contracts/IConfiguration.lua
-Core/Contracts/IProspectManager.lua
-Core/Contracts/IServiceProvider.lua
-Core/Contracts/ISlashCommandHandler.lua
+Core/Interfaces/IProspectsService.lua
+Core/Interfaces/IInviteService.lua
+Core/Interfaces/IEventBus.lua
+Core/Interfaces/IScheduler.lua
+Core/Interfaces/IConfiguration.lua
+Core/Interfaces/IProspectManager.lua
+Core/Interfaces/IServiceProvider.lua
+Core/Interfaces/ISlashCommandHandler.lua
+Core/Interfaces/IPanelFactory.lua
 
 # Logging (needed by debug commands)
 Infrastructure/Logging/Logger.lua
@@ -37,6 +38,7 @@ Infrastructure/Environment/RuntimeCaps.lua
 Infrastructure/Services/SavedVarsService.lua
 Infrastructure/Config/Config.lua
 Infrastructure/Services/ProspectsService.lua
+Infrastructure/Services/ProspectsManager.lua
 Infrastructure/Services/InviteService.lua
 Infrastructure/Providers/ProspectsDataProvider.lua
 Infrastructure/Services/OptionsService.lua
@@ -46,16 +48,14 @@ Infrastructure/Serialization/JSON.lua
 tools/Tokens.lua
 tools/UIHelpers.lua
 tools/ButtonLib.lua
-Infrastructure/UI/ButtonLib.lua
-Infrastructure/UI/CategoryManager.lua
 Infrastructure/Chat/ChatEventBridge.lua
 Infrastructure/Chat/ChatRouting.lua
+Infrastructure/UI/PanelFactory.lua
 
 # Domain + application
 GuildRecruiter.lua
 Application/Commands.lua
 Application/SlashCommandHandler.lua
-Application/ProspectsManager.lua
 Application/Chat/ChatFeed.lua
 
 # Framework
@@ -80,6 +80,7 @@ UI/UI_ChatPanel.lua
 UI/UI_CategoryDecorators.lua
 UI/Components/DataGrid.lua
 UI/UI_MainFrame.lua
+UI/UI_PanelRegistry.lua
 UI/UI_Debug.lua
 UI/UI_LogConsole.lua
 UI/UI_Summary.lua

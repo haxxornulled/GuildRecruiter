@@ -57,7 +57,7 @@ local function CreateModernSeparator(parent)
 end
 
 local function CreateModernCategoryButton(parent, text, categoryData)
-  local ButtonLib = Addon.require and (Addon.require("UI.ButtonLib") or Addon.require("Tools.ButtonLib"))
+  local ButtonLib = Addon.require and Addon.require("Tools.ButtonLib")
   
   if not ButtonLib then
     -- Enhanced fallback for when ButtonLib isn't available

@@ -1,12 +1,12 @@
--- Infrastructure/UI/CategoryManager.lua — DI registration shim
-local __p = { ... }
-local ADDON_NAME, Addon = __p[1], (__p[2] or {})
+-- Infrastructure/UI/CategoryManager.lua
+-- Thin DI shim mapping UI.CategoryManager to Tools.CategoryManager.
+local ADDON_NAME, Addon = ...
+Addon = Addon or _G[ADDON_NAME] or {}
 
--- Reuse tools/CategoryManager implementation, but provide a UI-scoped DI key as well
-if Addon.provide and not (Addon.IsProvided and Addon.IsProvided('UI.CategoryManager')) then
-  Addon.provide('UI.CategoryManager', function()
-    -- Resolve lazily at use time; do NOT call Addon.require here to avoid building the container during registration.
-    return Addon.Get and Addon.Get('Tools.CategoryManager')
-  end, { lifetime='SingleInstance' })
+if Addon and Addon.safeProvide and not (Addon.IsProvided and Addon.IsProvided('UI.CategoryManager')) then
+  Addon.safeProvide('UI.CategoryManager', function(sc)
+    return sc:Resolve('Tools.CategoryManager')
+  end, { lifetime = 'SingleInstance', meta = { layer = 'UI', area = 'shim', alias = true } })
 end
--- No return here; this file is a DI registration shim only.
+
+return true

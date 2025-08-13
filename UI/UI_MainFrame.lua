@@ -218,30 +218,19 @@ end
 
 -- Summary & Debug pages now live in separate modules (UI.Summary, UI.Debug).
 
-local function AttachPage(key, moduleName)
-  -- Create a wrapper panel so we can slide it independently of the page's own layout
-  local panel = CreateFrame("Frame", nil, contentParent)
-  panel:SetPoint("TOP", contentParent, "TOP", 0, 0)
-  panel:SetPoint("BOTTOM", contentParent, "BOTTOM", 0, 0)
-  panel:SetWidth(contentParent:GetWidth())
-  panel:Hide()
-  -- Inner page (actual content) created inside the panel
-  local ok, mod = pcall(Addon.require, moduleName)
-  if ok and mod and type(mod.Create) == "function" then
-    local page = mod:Create(panel)
-    page:ClearAllPoints()
-    page:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
-    page:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", 0, 0)
-    -- Expose Render pass-through on panel
-    panel._innerPage = page
-    panel.Render = function(self) if self._innerPage and self._innerPage.Render then pcall(self._innerPage.Render, self._innerPage) end end
-  else
-    local fallback = CreateFrame("Frame", nil, panel); fallback:SetAllPoints()
-    local msg = fallback:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    msg:SetPoint("CENTER"); msg:SetText(("|cffff5555%s failed.|r"):format(moduleName))
-    panel._innerPage = fallback
-    panel.Render = function() end
-    local L = LOG(); if type(L) == 'table' and L.Warn then L:Warn("AttachPage failed {Mod}: {Err}", { Mod = moduleName, Err = tostring(mod) }) end
+local function AttachPage(key)
+  -- Resolve through panel factory
+  local pf = (Addon.Get and Addon.Get('IPanelFactory')) or (Addon.require and Addon.require('IPanelFactory'))
+  if not pf or not pf.GetPanel then
+    local fallback = CreateFrame('Frame', nil, contentParent); fallback:SetAllPoints(); fallback:Hide()
+    contentFrames[key] = fallback
+    return
+  end
+  local ok, panel = pcall(function()
+    return pf:GetPanel(key, { parent = contentParent, slot = 'main' })
+  end)
+  if not ok or not panel then
+    local fb = CreateFrame('Frame', nil, contentParent); fb:SetAllPoints(); fb:Hide(); contentFrames[key] = fb; return
   end
   contentFrames[key] = panel
 end
@@ -288,6 +277,41 @@ local function SlideInPanel(panel)
   end
 end
 
+-- Utility: add a hover border to a button (no background hover)
+local function InstallHoverBorder(btn, opts)
+  if not btn or btn._grHoverBorder then return end
+  opts = opts or {}
+  local thickness = opts.thickness or 1
+  local color = opts.color or {1, 0.85, 0.1, 0.9} -- gold-ish
+  local anchor = opts.target or btn -- region to outline; defaults to the whole button
+  local edges = {}
+  local function edge()
+    local t = btn:CreateTexture(nil, "OVERLAY")
+    t:SetColorTexture(color[1], color[2], color[3], color[4])
+    t:Hide(); return t
+  end
+  -- Anchor edges exactly to the target region (no padding)
+  edges.top = edge();    edges.top:SetPoint("TOPLEFT", anchor, "TOPLEFT", 0, 0);       edges.top:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", 0, 0);         edges.top:SetHeight(thickness)
+  edges.bottom = edge(); edges.bottom:SetPoint("BOTTOMLEFT", anchor, "BOTTOMLEFT", 0, 0); edges.bottom:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", 0, 0); edges.bottom:SetHeight(thickness)
+  edges.left = edge();   edges.left:SetPoint("TOPLEFT", anchor, "TOPLEFT", 0, 0);       edges.left:SetPoint("BOTTOMLEFT", anchor, "BOTTOMLEFT", 0, 0);    edges.left:SetWidth(thickness)
+  edges.right = edge();  edges.right:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", 0, 0);    edges.right:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", 0, 0);  edges.right:SetWidth(thickness)
+
+  local function showEdges(s)
+    for _,tex in pairs(edges) do tex:SetShown(s) end
+  end
+  local onEnterPrev = btn:GetScript("OnEnter")
+  local onLeavePrev = btn:GetScript("OnLeave")
+  btn:SetScript("OnEnter", function(self, ...)
+    showEdges(true)
+    if onEnterPrev then onEnterPrev(self, ...) end
+  end)
+  btn:SetScript("OnLeave", function(self, ...)
+    showEdges(false)
+    if onLeavePrev then onLeavePrev(self, ...) end
+  end)
+  btn._grHoverBorder = edges
+end
+
 function UI:SelectCategory(idx)
   local filtered = GetCategories()
   local cat = filtered[idx]
@@ -306,8 +330,7 @@ function UI:SelectCategory(idx)
   local panel = contentFrames[cat.key]
   if not panel then
     -- Lazy attach (especially for debug page, which we only instantiate when devMode true and requested)
-    local modName = MODULE_MAP[cat.key]
-    AttachPage(cat.key, modName)
+    AttachPage(cat.key)
     panel = contentFrames[cat.key]
     if not panel then
       print("|cffff2222[GuildRecruiter][UI]|r Missing content for tab:", tostring(cat.key))
@@ -424,16 +447,7 @@ function UI:Build()
     if type(fn) == "function" then fn(Theme, contentParent) end
   end)
 
-  -- Pages
-  AttachPage("summary",   MODULE_MAP.summary)
-  AttachPage("prospects", MODULE_MAP.prospects)
-  AttachPage("blacklist", MODULE_MAP.blacklist)
-  AttachPage("settings",  MODULE_MAP.settings)
-  -- Debug page now lazy-loaded only if devMode currently enabled
-  local cfg = (Addon.require and Addon.require("IConfiguration")) or Addon.Get and Addon.Get("IConfiguration")
-  if cfg and cfg.Get and cfg:Get("devMode", false) then
-    AttachPage("debug", MODULE_MAP.debug)
-  end
+  -- Pages are now created via PanelFactory lazily on demand in SelectCategory
   local CM = CATM();
   local rawSel = (CM and CM.GetSelectedIndex and CM:GetSelectedIndex()) or 1
   -- Find filtered index matching rawSel key
@@ -470,11 +484,9 @@ function UI:Build()
   local btn = CreateFrame("Button", nil, mainFrame)
   btn:SetSize(28, 40)
     btn:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 2, -2)
-    -- Background hover plate (very subtle)
-    btn:SetNormalTexture("Interface/Buttons/WHITE8x8")
-    btn:GetNormalTexture():SetVertexColor(1,1,1,0.02)
-    btn:SetHighlightTexture("Interface/Buttons/WHITE8x8")
-    btn:GetHighlightTexture():SetVertexColor(1,1,1,0.08)
+  -- No hover effects for now (keep it clean)
+  if btn.SetNormalTexture then btn:SetNormalTexture("") end
+  if btn.SetHighlightTexture then btn:SetHighlightTexture("") end
     -- Arrow icon (use Blizzard HUD atlas if available)
     local icon = btn:CreateTexture(nil, "ARTWORK")
   icon:SetPoint("CENTER")
@@ -571,28 +583,19 @@ function UI:Build()
   tbtn:SetSize(28, 28)
   -- place to the right of sidebar toggle (guaranteed initialized above); fallback position redundant
   tbtn:SetPoint("TOPLEFT", sidebarToggle or contentParent, sidebarToggle and "TOPRIGHT" or "BOTTOMRIGHT", 4, 0)
-      -- Subtle hover plate
-      tbtn:SetNormalTexture("Interface/Buttons/WHITE8x8")
-      tbtn:GetNormalTexture():SetVertexColor(1,1,1,0.02)
-      tbtn:SetHighlightTexture("Interface/Buttons/WHITE8x8")
-      tbtn:GetHighlightTexture():SetVertexColor(1,1,1,0.08)
+  -- No hover effects for now (keep it clean)
+  if tbtn.SetNormalTexture then tbtn:SetNormalTexture("") end
+  if tbtn.SetHighlightTexture then tbtn:SetHighlightTexture("") end
       local ico = tbtn:CreateTexture(nil, "ARTWORK")
   ico:SetPoint("CENTER")
   ico:SetSize(24, 24)
       tbtn._icon = ico
       local function updateLabel()
-        -- Try modern atlases first, then fall back to scrollbar up/down textures that exist on all clients
-        local ok = false
-        if ico.SetAtlas then
-          -- Keep our own size; don't let the atlas shrink the icon
-          ok = ico:SetAtlas(chatMiniCollapsed and "hud-MainMenuBar-arrowup" or "hud-MainMenuBar-arrowdown") or false
-        end
-        if not ok then
-          ico:SetTexture(chatMiniCollapsed and "Interface/Buttons/UI-ScrollBar-ScrollUpButton-Up" or "Interface/Buttons/UI-ScrollBar-ScrollDownButton-Up")
-        end
-        -- Ensure final size looks right regardless of atlas/texture source
-  ico:SetSize(24, 24)
-        ico:SetAlpha(0.9)
+        -- Use a clear chat-bubble icon so intent is obvious
+        ico:SetTexture("Interface/FriendsFrame/UI-Toast-ChatInviteIcon")
+        ico:SetSize(24, 24)
+        ico:SetAlpha(chatMiniCollapsed and 0.55 or 1.0)
+        if ico.SetDesaturated then pcall(ico.SetDesaturated, ico, chatMiniCollapsed) end
       end
       updateLabel()
       tbtn:SetScript("OnClick", function()
