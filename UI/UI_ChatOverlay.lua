@@ -85,6 +85,29 @@ local function build()
     if overlayFrame and overlayFrame.Hide then overlayFrame:Hide() end
   end)
 
+  -- Minimize/Dock button (re-dock chat to main UI)
+  local dockBtn = CreateFrame('Button', nil, overlayFrame)
+  dockBtn:SetSize(24, 24)
+  -- Place to the left of the close button to avoid overlap
+  dockBtn:SetPoint('RIGHT', closeBtn, 'LEFT', -4, 0)
+  if dockBtn.SetFrameStrata then dockBtn:SetFrameStrata('DIALOG') end
+  if dockBtn.SetFrameLevel and closeBtn and closeBtn.GetFrameLevel then dockBtn:SetFrameLevel(closeBtn:GetFrameLevel() + 1) end
+  dockBtn:SetNormalTexture('Interface/Buttons/UI-Panel-MinimizeButton-Up')
+  dockBtn:SetPushedTexture('Interface/Buttons/UI-Panel-MinimizeButton-Down')
+  dockBtn:SetHighlightTexture('Interface/Buttons/UI-Panel-MinimizeButton-Highlight')
+  local nt = dockBtn:GetNormalTexture(); if nt then nt:ClearAllPoints(); nt:SetAllPoints(); nt:SetTexCoord(0,1,0,1) end
+  local pt = dockBtn:GetPushedTexture(); if pt then pt:ClearAllPoints(); pt:SetAllPoints(); pt:SetTexCoord(0,1,0,1) end
+  local ht = dockBtn:GetHighlightTexture(); if ht then ht:ClearAllPoints(); ht:SetAllPoints(); ht:SetTexCoord(0,1,0,1) end
+  if dockBtn.SetHitRectInsets then dockBtn:SetHitRectInsets(0, 0, 0, 0) end
+  dockBtn:SetScript('OnClick', function()
+    -- Show main UI which will re-dock the chat and hide the overlay
+    pcall(function()
+      local UIM = Addon.UI and Addon.UI.Main
+      if UIM and UIM.Show then UIM:Show() end
+    end)
+    if overlayFrame and overlayFrame.Hide then overlayFrame:Hide() end
+  end)
+
   -- Combat auto-close (opt-in; default true)
   local closeOnCombat = true
   pcall(function() local cfg = CFG(); if cfg and cfg.Get then closeOnCombat = cfg:Get('chatOverlayCloseInCombat', true) end end)
