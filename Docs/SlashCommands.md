@@ -1,3 +1,6 @@
+# Slash Commands (Guild Prospector)
+
+Legacy aliases: /gr (old), /guildrecruiter (old). New shorthand: /gp.
 # Slash Commands
 
 Primary aliases
@@ -9,6 +12,7 @@ Quick usage
 - /gr ui | /gr toggle — Open the main UI
 - /gr settings | /gr options — Open the addon settings
 - /gr log [toggle|show|hide|clear] — Toggle or control the log console
+- /gr overlay [toggle|show|hide] — Toggle the floating chat overlay
 - /gr messages [add <n> | remove <n> | list] — Manage rotation messages
 - /gr devmode [on|off|toggle] — Toggle developer mode (shows Debug tab)
 - /gr prune prospects <N> — Keep newest N prospects

@@ -148,70 +148,53 @@ end
 -----------------------------------------------------------------------
 -- Builder
 -----------------------------------------------------------------------
+-- Delegated builder now lives in Core/DI modules (Registration + Scope + Container).
+local _diContainerMod = nil
+local function _loadDI()
+  if _diContainerMod then return _diContainerMod end
+  local gr = _G['GuildRecruiter']
+  if gr and gr.DI and gr.DI.Container then
+    _diContainerMod = gr.DI.Container
+    return _diContainerMod
+  end
+  return nil
+end
+-- Forward declare newScope so fallback builder can reference it before its definition
+local newScope
 local function newBuilder()
+  local mod = _loadDI()
+  if mod and mod.ContainerBuilder then return mod.ContainerBuilder() end
+  -- Fallback inline builder (legacy path) so addon still works if DI module not split out yet.
   local registry = newRegistry()
-
   local builder = {}
-
   function builder:Register(factory)
-    if not is_callable(factory) then
-      error("Register(factory): factory must be callable")
-    end
-    local rb = newRegistrationBuilder(registry, factory)
+    local rb, _ = newRegistrationBuilder(registry, factory)
     return rb
   end
-
-  function builder:RegisterInstance(key, instance)
-    local rb = newRegistrationBuilder(registry, function() return instance end)
-    rb:As(key):SingleInstance()
-    rb:_commit()
-    return rb
-  end
-
-  function builder:RegisterModule(mod)
-    if type(mod) ~= "table" or type(mod.Load) ~= "function" then
-      error("RegisterModule: expected table with Load(self, builder) function")
-    end
-    mod:Load(builder)
-    return builder
-  end
-
-  function builder:Build()
-    -- finalize all registrations (commit any uncommitted)
-    -- (In this design, we commit on As/AsDecorator and Build expects everything already committed by rb users.)
-    -- Still, we sanity check: ensure each reg has at least one service unless decorator or AsSelf
-    for _, regId in ipairs(registry.order) do
-      local r = registry.regs[regId]
-      if r.decoratesKey == nil then
-        local count = 0
-        for _ in pairs(r.services) do count = count + 1 break end
-        if count == 0 then
-          error("Registration " .. r.id .. " has no services. Use :As(key) or :AsSelf().")
-        end
-      end
-    end
-    return Core._newContainer(registry)
-  end
-
-  -- expose a way to finalize an RB (so user doesn’t forget)
   function builder:_commit(rb)
-    rb:_commit()
-    return builder
+    if rb and rb._commit then rb:_commit() end
   end
-
-  return builder, registry
+  function builder:Build()
+    return newScope(registry, nil, 'root', nil)
+  end
+  return builder
 end
 
 -----------------------------------------------------------------------
 -- Lifetime Scope / Container
 -----------------------------------------------------------------------
-local function newScope(registry, parent, tag, root)
+function newScope(registry, parent, tag, root)
   local scope = {}
 
   scope._registry = registry
   scope._parent = parent
   scope._tag = tag
-  scope._root = root or parent and parent._root or nil
+  if parent then
+    scope._root = root or parent._root
+  else
+    -- root scope initializes itself as root
+    scope._root = root or scope
+  end
 
   -- caches and tracking
   scope._singletons = parent and parent._singletons or {}    -- only root owns this table
@@ -532,6 +515,15 @@ local function newScope(registry, parent, tag, root)
     if ok then return res, nil else return nil, res end
   end
 
+  -- ResolveOptional: returns nil instead of raising when key missing (fast path avoids pcall on success cases)
+  function scope:ResolveOptional(key, overrides)
+    local arr = self._registry.map[key]
+    if not arr or #arr == 0 then return nil end
+    local ok, inst = pcall(resolveCore, key, overrides, false, false)
+    if ok then return inst end
+    return nil
+  end
+
   function scope:ResolveNamed(name, overrides) -- alias for Resolve(string)
     return resolveCore(name, overrides, false, false)
   end
@@ -587,18 +579,13 @@ end
 -- Container (root)
 -----------------------------------------------------------------------
 function Core._newContainer(registry)
-  local root = newScope(registry, nil, "root", nil)
-  root._root = root
-  function root:DisposeRoot()
-  if rawget(self, '_isDisposed') then return end
-    self:Dispose()
-  end
-  return root
+  local mod = _loadDI()
+  if mod and mod.BuildContainer then return mod.BuildContainer(registry) end
+  -- Fallback: build root scope directly
+  return newScope(registry, nil, 'root', nil)
 end
 
-function Core.Builder()
-  return newBuilder()
-end
+function Core.Builder() return newBuilder() end
 
 -----------------------------------------------------------------------
 -- Addon.provide / Addon.require convenience
@@ -634,10 +621,16 @@ local function ensureGlobalBuilt()
   _global.container = _global.builder:Build()
   -- Expose built container for diagnostics (ListRegistered) & tooling
   Core._container = _global.container
+  -- Export root scope for advanced diagnostics (/gr di extended).
+  if not Core.RootScope then
+    Core.RootScope = _global.container
+  end
   end
 end
 
 local Addon = {}
+-- Export RootScope if built earlier
+if Core.RootScope and not Addon.RootScope then Addon.RootScope = Core.RootScope end
 
 -- Addon.provide(key, valueOrFactory [, opts])
 -- opts = { lifetime = "SingleInstance"|"InstancePerDependency"|"InstancePerLifetimeScope" }
@@ -761,6 +754,22 @@ end
 function Addon.Get(key)
   -- Non-building optional accessor; returns instance only if already available
   return Addon.Peek(key)
+end
+
+-- ResolveOptional via global container (will build if not yet built)
+function Addon.ResolveOptional(key)
+  if not hasContainer() then
+    -- build lazily only if some other require attempts; do not force build here
+    local okPeek = Addon.Peek(key)
+    return okPeek
+  end
+  local c = _global.container
+  if c and c.ResolveOptional then return c:ResolveOptional(key) end
+  if c and c.TryResolve then
+    local inst, _ = c:TryResolve(key)
+    return inst
+  end
+  return nil
 end
 
 -- Non-building peek: returns instance only if the container already exists; never builds it

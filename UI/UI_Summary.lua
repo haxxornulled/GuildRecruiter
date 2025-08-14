@@ -23,7 +23,9 @@ function M:Create(parent)
 
   local sub = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   sub:SetPoint("TOP", title, "BOTTOM", 0, -8)
-  sub:SetText("Guild Recruiter — Summary")
+  sub:SetText("Guild Prospector — Summary")
+  local t = (Addon and Addon.TITLE) or "Guild Prospector"
+  sub:SetText(t .. " — Summary")
 
   -- Stats block (simple textured background to avoid BackdropTemplate analyzer issues)
   local statsBox = CreateFrame("Frame", nil, f)
@@ -73,7 +75,7 @@ function M:Create(parent)
     local pm = getProspectManager()
     local provider = getProvider()
     local cfg = safeRequire("IConfiguration")
-    local recruiter = safeRequire("Recruiter") -- only for queue stats fallback
+  local queueSvc = (Addon.Get and Addon.Get('QueueService')) or safeRequire('QueueService')
     -- Prospect stats via provider
     local prospectStats = (provider and provider.GetStats and provider:GetStats()) or { total=0, avgLevel=0, topClasses={} }
     local top = prospectStats.topClasses or {}
@@ -83,7 +85,7 @@ function M:Create(parent)
     local blCount = 0
     if pm and pm.GetBlacklist then local bl = pm:GetBlacklist() or {}; for _ in pairs(bl) do blCount = blCount + 1 end end
     -- Queue stats (legacy recruiter)
-    local qs = recruiter and recruiter.QueueStats and recruiter:QueueStats() or { total=0, runtime=0, duplicates=0 }
+  local qs = queueSvc and queueSvc.QueueStats and queueSvc:QueueStats() or { total = 0, runtime = 0, duplicates = 0 }
     -- Invite history (best-effort)
     local inviteSvc = safeRequire("InviteService")
     local histCount, histMax = 0, (cfg and cfg:Get("inviteHistoryMax", 1000)) or 1000
@@ -104,7 +106,8 @@ function M:Create(parent)
   local tokens = {}
   local function subscribe()
     if not bus or not bus.Subscribe then return end
-    local events = { "Recruiter.QueueStats", "Prospects.Changed", "ProspectsManager.Event" }
+  local E = (Addon.ResolveOptional and Addon.ResolveOptional('Events')) or error('Events constants missing')
+  local events = { "QueueService.Stats", "Recruiter.QueueStats", E.Prospects.Changed, E.Prospects.Manager }
     for _,ev in ipairs(events) do
       local tok = bus:Subscribe(ev, function() calcAndRender() end, { namespace = "UI.Summary" })
       tokens[#tokens+1] = tok

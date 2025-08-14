@@ -114,6 +114,11 @@ Methods:
 - Debounce(key, window, fn, opts?)
 - Throttle(key, window, fn, opts?)
 - Coalesce(bus, event, window, reducerFn, publishAs?, opts?) -> handle { unsubscribe() }
+ - Diagnostics() -> { tasks, peak, ran }
+
+Notes:
+- Always supply a `namespace` in opts for recurring or grouped tasks you might cancel later via `CancelNamespace`.
+- Debounce/Throttle are test-covered; Coalesce enables batching high-frequency events into one publish.
 
 ## EventBus (port)
 Methods:
@@ -122,6 +127,12 @@ Methods:
 - Unsubscribe(token) -> bool
 - UnsubscribeNamespace(ns) -> countRemoved
 - Diagnostics(opts?) -> table (publishes, errors, events[])
+ - Once(event, fn, opts?) -> token (fires only once)
+
+Notes:
+- Use the `Events` constants module (`Core/Events.lua`) rather than raw strings for addon-defined events (e.g. `Events.Prospects.Changed`).
+- Always namespace UI subscriptions (e.g. `{ namespace='UI.Prospects' }`) for bulk teardown.
+- `Once` is preferred for bootstrap or readiness events to avoid manual unsubscribe.
 
 ## Clock (port)
 Methods:
@@ -132,3 +143,21 @@ Implementation: `Infrastructure/Time/Clock.lua` (GetTime/time adapters) and head
 
 ---
 Generated relocation to satisfy Clean Architecture (Core == pure domain + primitives).
+
+## Unified Prospect Event Contract
+All prospect mutations publish a single event: `Events.Prospects.Changed` with an action as first argument. Actions include `added`, `updated`, `removed`, `blacklisted`, `unblacklisted`, `pruned`.
+
+## Diagnostics Consumption
+Slash command `/gr diag` aggregates:
+- EventBus diagnostics (publishes/errors/handler counts)
+- Scheduler diagnostics (tasks, peak, ran)
+- DI scope/registration counts
+- Prospect read model stats
+
+Programmatic pattern:
+```
+local bus = Addon.ResolveOptional and Addon.ResolveOptional('EventBus')
+if bus then local bdiag = bus:Diagnostics() end
+```
+
+Diagnostics are side-effect free and safe in UI contexts.

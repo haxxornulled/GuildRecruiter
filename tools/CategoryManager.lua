@@ -74,6 +74,16 @@ local function ApplyDecorators()
   end
 end
 
+-- Lazy EventBus accessor (avoids container build at file load)
+local function BUS()
+  local bus = (Addon.Get and Addon.Get('EventBus')) or (Addon.require and Addon.require('EventBus')) or Addon.EventBus
+  return bus
+end
+
+local function Publish(event, ...)
+  local bus = BUS(); if bus and bus.Publish then pcall(bus.Publish, bus, event, ...) end
+end
+
 -- Public API
 function CategoryManager:Init(initial)
   categories = {}
@@ -91,6 +101,7 @@ function CategoryManager:Init(initial)
   end
   initialized = true
   SortCategories(); ApplyDecorators();
+  Publish('CategoriesChanged','init')
 end
 
 function CategoryManager:EnsureInitialized()
@@ -105,12 +116,12 @@ function CategoryManager:AddCategory(def)
   for _, c in ipairs(categories) do if c.key == def.key then return end end
   def.type = def.type or "category"
   categories[#categories+1] = def
-  SortCategories(); ApplyDecorators()
+  SortCategories(); ApplyDecorators(); Publish('CategoriesChanged','add', def.key)
 end
 
 function CategoryManager:AddSeparator(order)
   categories[#categories+1] = { type = "separator", order = order }
-  SortCategories()
+  SortCategories(); Publish('CategoriesChanged','add-separator')
 end
 
 function CategoryManager:RemoveCategory(key)
@@ -118,15 +129,18 @@ function CategoryManager:RemoveCategory(key)
     local c = categories[i]
     if c.key == key then table.remove(categories, i) end
   end
+  Publish('CategoriesChanged','remove', key)
 end
 
 function CategoryManager:SetCategoryVisible(key, visible)
-  for _, c in ipairs(categories) do if c.key == key then c.visible = visible; break end end
+  local changed=false
+  for _, c in ipairs(categories) do if c.key == key then c.visible = visible; changed=true; break end end
+  if changed then Publish('CategoriesChanged','visibility', key, visible) end
 end
 
 function CategoryManager:RegisterCategoryDecorator(key, fn)
   if type(fn) == "function" then decorators[key] = fn else decorators[key] = nil end
-  ApplyDecorators()
+  ApplyDecorators(); Publish('CategoriesChanged','decorator', key)
 end
 
 function CategoryManager:ListCategories()
@@ -142,7 +156,7 @@ function CategoryManager:GetAll()
 end
 
 function CategoryManager:SelectIndex(idx)
-  if categories[idx] then selectedIndex = idx end
+  if categories[idx] then selectedIndex = idx; Publish('CategorySelected', categories[idx].key, idx) end
 end
 function CategoryManager:GetSelectedIndex() return selectedIndex end
 

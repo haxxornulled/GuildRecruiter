@@ -25,6 +25,7 @@ local IProspectManager = Interface('IProspectManager', {
   'GetBlacklist',     -- () -> table
   'PruneProspects',   -- (max?) -> removedCount
   'PruneBlacklist',   -- (maxKeep?) -> removedCount
+  'Upsert',           -- (prospect) -> unit (added for convenience / test helper compatibility)
 })
 
 -- Optional: register the contract for early aliasing if desired

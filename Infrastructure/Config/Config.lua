@@ -31,6 +31,7 @@ local DEFAULTS = {
     blacklistMax        = 0,
     autoPruneInterval   = 1800,
     chatLogMinLevel     = "INFO",
+    dbVersion           = 1,
 }
 
 local VALID_CHANNEL_SPECS = { AUTO = true, SAY = true, YELL = true, GUILD = true, OFFICER = true, INSTANCE_CHAT = true }
@@ -207,6 +208,13 @@ local function InitializeConfig()
         _G[DB_NAME].doNotInvite = nil
     end
     _G[DB_NAME] = apply_defaults(_G[DB_NAME], DEFAULTS)
+    -- Simple migration scaffold
+    local curVersion = tonumber(_G[DB_NAME].dbVersion) or 1
+    local targetVersion = DEFAULTS.dbVersion
+    if curVersion < targetVersion then
+        -- future: iterate migrations[curVersion+1 .. targetVersion]
+        _G[DB_NAME].dbVersion = targetVersion
+    end
     DB = _G[DB_NAME]
     Config._suppressEvents = true
     local normalized = 0

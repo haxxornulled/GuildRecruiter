@@ -1,3 +1,6 @@
+# Guild Prospector Core
+
+Former name: Guild Recruiter.
 # Core: DI container, entities, collections
 
 This folder contains the lightweight Autofac-style DI container and foundational types used across the addon. It’s WoW-safe (Lua 5.1), has no external deps, and is designed for Clean Architecture layering.

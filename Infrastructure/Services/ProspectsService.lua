@@ -1,5 +1,8 @@
 local __args = {...}
 local ADDON_NAME, Addon = __args[1], (__args[2] or {})
+-- Ensure we point at the shared addon namespace table (the second var is often nil when loaded via TOC)
+Addon = (Addon and next(Addon)) and Addon or _G[ADDON_NAME] or Addon or {}
+_G[ADDON_NAME] = _G[ADDON_NAME] or Addon
 
 -- Never resolve DI at file load; use Addon.Class if present, fallback to inline shim
 local Class = (Addon and Addon.Class) or function(_,def)
@@ -19,6 +22,9 @@ local ProspectsService = Class('ProspectsService', {
   __implements = { 'IProspectsService' },
 })
 
+-- Status constants (lazy resolve for safety in early load / tests)
+local Status = (Addon and Addon.ResolveOptional and Addon.ResolveOptional('ProspectStatus')) or { New='New', Invited='Invited', Blacklisted='Blacklisted', Rejected='Rejected' }
+
 function ProspectsService:init(bus, logger, savedVars)
   -- Logger contract may differ; ensure we have safe methods
   self._bus = bus
@@ -34,8 +40,10 @@ end
 local function publish(self, action, guid)
   local bus = self._bus
   if bus then
-    local pub = rawget(bus, 'Publish') or (type(bus)=='table' and bus.Publish)
-    if type(pub)=='function' then pcall(pub, bus, 'Prospects.Changed', action, guid) end
+    local pub = rawget(bus, 'Publish') or (type(bus) == 'table' and bus.Publish)
+  local E = Addon.ResolveOptional and Addon.ResolveOptional('Events') or error('Events constants not registered')
+  local ev = E.Prospects.Changed
+  if type(pub) == 'function' then pcall(pub, bus, ev, action, guid) end
   end
 end
 
@@ -114,6 +122,23 @@ function ProspectsService:IsBlacklisted(guid) local db=DB(self); return db.black
 function ProspectsService:GetBlacklist() local db=DB(self); return db.blacklist end
 function ProspectsService:GetBlacklistReason(guid) local db=DB(self); local e=db.blacklist[guid]; return e and e.reason or nil end
 
+-- Lightweight aggregated counts (avoids full provider cost when only high-level numbers needed)
+function ProspectsService:GetCounts()
+  local db = DB(self)
+  local total, blacklisted, new, active = 0,0,0,0
+  local bl = db.blacklist or {}
+  for guid,p in pairs(db.prospects) do
+    total = total + 1
+    local isBl = bl[guid] ~= nil
+    if isBl then blacklisted = blacklisted + 1 else
+      local st = p.status or Status.New
+      if st == Status.New then new = new + 1 end
+      active = active + 1
+    end
+  end
+  return { total = total, blacklisted = blacklisted, active = active, new = new }
+end
+
 -- Prune
 function ProspectsService:PruneProspects(max)
   max = tonumber(max); if not max or max <= 0 then return 0 end
@@ -141,9 +166,13 @@ function ProspectsService:PruneBlacklist(maxKeep)
 end
 
 -- Register via ClassProvide if not already provided
-if Addon.ClassProvide and not (Addon.IsProvided and Addon.IsProvided('ProspectsService')) then
-  Addon.ClassProvide('ProspectsService', ProspectsService, { lifetime='SingleInstance', meta = { layer = 'Application', area = 'prospects' } })
+local function RegisterProspectsService()
+  if Addon.ClassProvide and not (Addon.IsProvided and Addon.IsProvided('ProspectsService')) then
+    Addon.ClassProvide('ProspectsService', ProspectsService, { lifetime='SingleInstance', meta = { layer = 'Application', area = 'prospects' } })
+  end
 end
+RegisterProspectsService()
+Addon._RegisterProspectsService = RegisterProspectsService
 
 -- Back-compat adapters (still provided same as before)
 local function adapterProvided(oldKey) return Addon.IsProvided and Addon.IsProvided(oldKey) end

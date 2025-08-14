@@ -350,7 +350,8 @@ function M:Create(parent)
 
   -- Event subscriptions (same as Prospects)
   if Bus and Bus.Subscribe then
-    Bus:Subscribe("Prospects.Changed", function(_, action)
+  local E = (Addon.ResolveOptional and Addon.ResolveOptional('Events')) or error('Events constants missing')
+  Bus:Subscribe(E.Prospects.Changed, function(_, action)
       if f:IsShown() and (action == "blacklisted" or action == "unblacklisted" or action == "removed" or action == "declined") then
         f:Render()
       end

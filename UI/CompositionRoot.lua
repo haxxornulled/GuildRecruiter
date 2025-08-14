@@ -18,9 +18,10 @@ local specs = {
   { key = "Scheduler", register = Addon._RegisterScheduler, resolve = false },
   { key = "RuntimeCaps", register = function() end, resolve = false }, -- self-registers on load
   { key = "ChatRouting", register = function() end, resolve = false }, -- self-registers on load
-  { key = "ProspectsService", register = function() end, resolve = false }, -- self-registers on load
+  { key = "ProspectsService", register = Addon._RegisterProspectsService, resolve = false }, -- explicit registration to guarantee presence
   { key = "ProspectsManager", register = Addon._RegisterProspectsManager, resolve = false },
   { key = "ProspectsDataProvider", register = Addon._RegisterProspectsDataProvider, resolve = false },
+  { key = "AutoPruneService", register = Addon._RegisterAutoPruneService, resolve = false },
   { key = "Recruiter", register = Addon._RegisterRecruiter, resolve = false },
   { key = "InviteService", register = Addon._RegisterInviteService, resolve = false },
   { key = "Options", register = Addon._RegisterOptions, resolve = false },

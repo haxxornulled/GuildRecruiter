@@ -1,3 +1,6 @@
+# Guild Prospector References
+
+Legacy name: Guild Recruiter.
 # WoW API References
 
 Authoritative references for in-game APIs we touch. Use these when extending services or UI.

@@ -438,7 +438,7 @@ function SettingsUI:Create(parent)
 
   -- Recalculate content height with new spacing
   local function Recalc()
-    local totalHeight = 4 + 230 + PAD + 450 + PAD -- Updated for new message frame height
+  local totalHeight = 4 + 230 + PAD + 450 + PAD + 60 -- extra space for footer buttons
     content:SetHeight(totalHeight)
   end
   
@@ -448,6 +448,41 @@ function SettingsUI:Create(parent)
   function f:Render() 
     -- Refresh any dynamic content if needed
   end
+
+  -- Footer actions (Reset to Defaults)
+  local resetBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+  resetBtn:SetSize(160, 24)
+  resetBtn:SetPoint("TOPLEFT", msgsFrame, "BOTTOMLEFT", 0, -40)
+  resetBtn:SetText("Reset to Defaults")
+  resetBtn:SetScript("OnClick", function()
+    local ok, cfg = pcall(function() return Config end)
+    if ok and cfg and cfg.Reset then
+      cfg:Reset()
+      if Bus and Bus.Publish then Bus:Publish("ConfigChanged", "*reset*", true) end
+      -- Re-render sliders / checkboxes with fresh values
+      enableCB:SetChecked(cfg:Get("broadcastEnabled") and true or false)
+      sInterval:SetValue(tonumber(cfg:Get("broadcastInterval")) or 300)
+      sJitter:SetValue(math.floor((tonumber(cfg:Get("jitterPercent")) or 0.15) * 100 + 0.5))
+      sInviteCD:SetValue(tonumber(cfg:Get("inviteClickCooldown", 3)) or 3)
+      sInvitePill:SetValue(tonumber(cfg:Get("invitePillDuration", 3)) or 3)
+      cycleCB:SetChecked(cfg:Get("inviteCycleEnabled", true) and true or false)
+      autoBlacklistCB:SetChecked(cfg:Get("autoBlacklistDeclines", true) and true or false)
+      sHist:SetValue(tonumber(cfg:Get("inviteHistoryMax", 1000)) or 1000)
+      devCB:SetChecked(cfg:Get("devMode", false) and true or false)
+      disposeCB:SetChecked(cfg:Get("disposeContainerOnShutdown", true) and true or false)
+      overlayCloseCB:SetChecked(cfg:Get("chatOverlayCloseInCombat", true) and true or false)
+      e1:SetText(cfg:Get("customMessage1", ""))
+      e2:SetText(cfg:Get("customMessage2", ""))
+      e3:SetText(cfg:Get("customMessage3", ""))
+            local current = cfg:Get("broadcastChannel") or "AUTO"
+            UIDropDownMenu_SetText(chanDrop, current == "AUTO" and "AUTO (Trade > General > Say)" or current)
+      if Addon.UI and Addon.UI.Main and Addon.UI.Main.ShowToast then
+        pcall(Addon.UI.Main.ShowToast, Addon.UI.Main, "Settings reset", 3)
+      end
+    else
+      print("|cffff5555[GR]|r Reset failed")
+    end
+  end)
   
   return f
 end

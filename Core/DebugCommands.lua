@@ -1,4 +1,3 @@
--- Core/DebugCommands.lua — minimal debug slash commands for Core-only smoke tests
 local ADDON_NAME, Addon = ...
 
 local function getLogger()
@@ -43,6 +42,10 @@ local function showHelp()
   println("/gr log test      - emit a test log burst at all levels")
   println("/gr log dump [N]  - print last N log lines (buffer)")
   println("/gr tick          - run a scheduler NextTick smoke test")
+  println("/gr diag          - diagnostics summary (services, prospects, events, scheduler)")
+  println("/gr di            - DI container diagnostics (services, decorators, singletons)")
+  println("/gr di extended   - DI + full snapshot (EventBus/Scheduler)")
+  println("/gr bench         - micro benchmark (EventBus publish & Scheduler insert)")
   println("/gr every <sec>   - run a scheduler Every timer once and cancel")
   println("/gr sub <event>   - subscribe to an event and echo once")
   println("/gr debounce <ms> - demo debounce bursts (fires once after quiet)")
@@ -77,7 +80,7 @@ local function handleSlash(msg)
     if not bus then println("EventBus not available."); return end
     local ok, diag = pcall(bus.Diagnostics, bus)
     if ok and diag then
-  println(string.format("EventBus publishes=%d errors=%d events=%d", diag.publishes or 0, diag.errors or 0, #(diag.events or {})))
+      println(string.format("EventBus publishes=%d errors=%d events=%d", diag.publishes or 0, diag.errors or 0, #(diag.events or {})))
       for _, ev in ipairs(diag.events or {}) do
         println(string.format("  %s (%d handlers)", ev.event, ev.handlers))
       end
@@ -95,6 +98,57 @@ local function handleSlash(msg)
     if not bus then println("EventBus not available."); return end
     local ok = pcall(bus.Publish, bus, ev)
     println(ok and ("Published '"..ev.."'.") or ("Failed to publish '"..ev.."'."))
+    return
+  end
+
+  if sub == "diag" then
+    local counts = (Addon.ResolveOptional and Addon.ResolveOptional('ProspectsService')) and Addon.ResolveOptional('ProspectsService'):GetCounts() or {}
+    println(string.format("Prospects: total=%s active=%s new=%s blacklisted=%s",
+      counts.total or '?', counts.active or '?', counts.new or '?', counts.blacklisted or '?'))
+    local bus = Addon.ResolveOptional and Addon.ResolveOptional('EventBus')
+    if bus and bus.Diagnostics then
+      local d = bus:Diagnostics()
+      println(string.format("EventBus: publishes=%d errors=%d events=%d", d.publishes or 0, d.errors or 0, #(d.events or {})))
+    end
+    local sch = Addon.ResolveOptional and Addon.ResolveOptional('Scheduler')
+    if sch and sch.Diagnostics then
+      local sd = sch:Diagnostics()
+      println(string.format("Scheduler: tasks=%d ran=%d peak=%d", sd.tasks or 0, sd.ran or 0, sd.peak or 0))
+    end
+    local regList = (Addon.ListRegistered and Addon.ListRegistered()) or {}
+    println("Services registered: "..tostring(#regList))
+    return
+  end
+
+  if sub == "di" then
+    local mode = (rest or ""):match("^(%S+)")
+    local root = (Addon.RootScope) or (Addon.ResolveOptional and Addon.ResolveOptional('IServiceProvider')) or (Addon.Get and Addon.Get('IServiceProvider'))
+    if not root or not root.Diagnostics then println('DI root not available'); return end
+    local d = root:Diagnostics()
+    println(string.format('DI: tag=%s services=%d decorators=%d singletons=%d scoped=%d chainDepth=%d',
+      d.tag or 'root', d.services or 0, d.decorators or 0, d.singletons or 0, d.scopedInstances or 0, d.chainDepth or 0))
+    if mode == 'extended' then
+      local list = (Addon.ListRegistered and Addon.ListRegistered()) or {}
+      println('Registered keys ('..#list..') => '..table.concat(list, ', '))
+      local bus = Addon.ResolveOptional and Addon.ResolveOptional('EventBus')
+      local sch = Addon.ResolveOptional and Addon.ResolveOptional('Scheduler')
+      local snapshot = {
+        di = d,
+        bus = bus and bus.Diagnostics and bus:Diagnostics() or {},
+        scheduler = sch and sch.Diagnostics and sch:Diagnostics() or {},
+      }
+      local function encode(v)
+        local t = type(v)
+        if t == 'table' then
+          local parts = {}
+          for k, val in pairs(v) do parts[#parts+1] = string.format('%s=%s', tostring(k), encode(val)) end
+          table.sort(parts)
+          return '{'..table.concat(parts, ';')..'}'
+        elseif t == 'string' then return string.format('%q', v)
+        else return tostring(v) end
+      end
+      println('Snapshot='..encode(snapshot))
+    end
     return
   end
 
@@ -147,7 +201,7 @@ local function handleSlash(msg)
     local ok, sch = pcall(Addon.require or function() end, "Scheduler")
     if not ok or not sch or not sch.Debounce then println("Scheduler not available."); return end
     println("Debounce demo: window="..windowMs.."ms sending 10 rapid calls")
-    for i=1,10 do
+    for i = 1, 10 do
       sch:Debounce("DemoDeb", windowMs/1000, function()
         println("Debounce fired once after quiet: i="..i)
       end)
@@ -160,7 +214,7 @@ local function handleSlash(msg)
     local ok, sch = pcall(Addon.require or function() end, "Scheduler")
     if not ok or not sch or not sch.Throttle then println("Scheduler not available."); return end
     println("Throttle demo: window="..windowMs.."ms sending 10 rapid calls")
-    for i=1,10 do
+    for i = 1, 10 do
       sch:Throttle("DemoThr", windowMs/1000, function()
         println("Throttle fired at i="..i)
       end)
@@ -176,7 +230,7 @@ local function handleSlash(msg)
     if not ok or not sch or not sch.Coalesce then println("Scheduler without Coalesce."); return end
     println("Coalescing event '"..e.."' over "..ms.."ms; aggregated publishes will appear as '..e..'.Aggregated'")
     local handle = sch:Coalesce(bus, e, ms/1000, function(acc, payload)
-      acc = acc or { count=0 }
+      acc = acc or { count = 0 }
       acc.count = acc.count + 1
       return acc
     end, e..".Aggregated", { namespace = "CoreDebug" })
@@ -192,30 +246,26 @@ local function handleSlash(msg)
       local lvl = (rest2 or ""):match("^(%S+)")
       if not lvl then println("Usage: /gr log level <TRACE|DEBUG|INFO|WARN|ERROR|FATAL>"); return end
       local okLs, ls = pcall(Addon.require or function() end, "LevelSwitch")
-      if okLs and ls and ls.Set then
-        ls:Set(lvl:upper())
-        println("Log level set to "..lvl:upper())
-      else
-        -- Fallback via logger instance
-        log:SetMinLevel(lvl:upper())
-        println("Log level set (via logger) to "..lvl:upper())
-      end
+      ---@diagnostic disable-next-line
+      if okLs and ls and ls.Set then pcall(ls.Set, ls, lvl:upper()) end
+      if log.SetMinLevel then pcall(log.SetMinLevel, log, lvl:upper()) end
+      println("Log level set to " .. lvl:upper())
       return
     elseif sub2 == "test" then
       log:Trace("Trace test from {Src}", { Src = "CoreDebug" })
       log:Debug("Debug test from {Src}", { Src = "CoreDebug" })
-      log:Info ("Info  test from {Src}", { Src = "CoreDebug" })
-      log:Warn ("Warn  test from {Src}", { Src = "CoreDebug" })
+      log:Info("Info  test from {Src}", { Src = "CoreDebug" })
+      log:Warn("Warn  test from {Src}", { Src = "CoreDebug" })
       log:Error("Error test from {Src}", { Src = "CoreDebug" })
       log:Fatal("Fatal test from {Src}", { Src = "CoreDebug" })
       println("Emitted test logs at all levels.")
       return
     elseif sub2 == "dump" then
-      local n = tonumber((rest2 or ""):match("^(%d+)")) or 20
-  local okS, sink = pcall(Addon.require or function() end, "LogSink.Buffer")
-  local buf = (okS and sink and sink.buffer) or (Addon and Addon.LogBuffer) or {}
+      local n = tonumber((rest2 or ""):match("^(%d+)") ) or 20
+      local okS, sink = pcall(Addon.require or function() end, "LogSink.Buffer")
+      local buf = (okS and sink and sink.buffer) or (Addon and Addon.LogBuffer) or {}
       local total = #buf
-      local start = math.max(1, total - n + 1)
+      local start = total - n + 1; if start < 1 then start = 1 end
       println(string.format("Dumping last %d/%d log lines:", math.min(n, total), total))
       for i = start, total do println(buf[i]) end
       return
@@ -225,10 +275,37 @@ local function handleSlash(msg)
     end
   end
 
+  ---@diagnostic disable-next-line
+  if sub == "bench" then
+    local bus = Addon.ResolveOptional and Addon.ResolveOptional('EventBus')
+    local sch = Addon.ResolveOptional and Addon.ResolveOptional('Scheduler')
+    if not bus or not sch then println('Bench requires EventBus & Scheduler'); return end
+    local publishes = 2000
+    local consumed = 0
+    local tok = bus:Subscribe('Bench.Evt', function() consumed = consumed + 1 end, { namespace = 'Bench' })
+    local t0 = (GetTime and GetTime()) or os.clock()
+    for i = 1, publishes do bus:Publish('Bench.Evt', i) end
+    local t1 = (GetTime and GetTime()) or os.clock()
+    bus:Unsubscribe(tok)
+    local tasks = 1000
+    local s0 = (GetTime and GetTime()) or os.clock()
+    for i = 1, tasks do sch:After(60, function() end, { namespace = 'BenchSch' }) end
+    local s1 = (GetTime and GetTime()) or os.clock()
+    local pubTime = (t1 - t0)
+    local insTime = (s1 - s0)
+    println(string.format('Bench: publishes=%d consumed=%d time=%.4fs (%.2fus/publish)', publishes, consumed, pubTime, (pubTime / publishes) * 1e6))
+    println(string.format('Bench: scheduler inserts=%d time=%.4fs (%.2us/task)', tasks, insTime, (insTime / tasks) * 1e6))
+    sch:CancelNamespace('BenchSch')
+    _G.GuildRecruiterBenchDB = _G.GuildRecruiterBenchDB or { history = {} }
+    local h = _G.GuildRecruiterBenchDB.history
+    h[#h+1] = { ts = time(), publishes = publishes, pubTime = pubTime, tasks = tasks, insTime = insTime }
+    if #h > 25 then table.remove(h, 1) end
+    return
+  end
+
   println("Unknown command. Try /gr help.")
 end
 
--- Register slash commands (kept simple for core-only; full addon overrides later)
 SLASH_GRCORE1 = "/gr"
 SLASH_GRCORE2 = "/grcore"
 SlashCmdList.GRCORE = handleSlash

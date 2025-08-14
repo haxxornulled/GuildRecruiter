@@ -264,6 +264,34 @@ function List:Last(predicate)
     error("No matching element found")
 end
 
+-- New convenience aggregation helpers -------------------------------------------------
+function List:Any(predicate)
+    if not predicate then return self._count > 0 end
+    for i=1,self._count do if predicate(self._items[i], i) then return true end end
+    return false
+end
+
+function List:All(predicate)
+    if not predicate then return true end
+    for i=1,self._count do if not predicate(self._items[i], i) then return false end end
+    return true
+end
+
+function List:Sum(selector)
+    local total = 0
+    if selector then
+        for i=1,self._count do total = total + (tonumber(selector(self._items[i], i)) or 0) end
+    else
+        for i=1,self._count do total = total + (tonumber(self._items[i]) or 0) end
+    end
+    return total
+end
+
+function List:Average(selector)
+    if self._count == 0 then return 0 end
+    return self:Sum(selector) / self._count
+end
+
 function List:LastOrDefault(predicate, defaultValue)
     for i = self._count, 1, -1 do
         local item = self._items[i]

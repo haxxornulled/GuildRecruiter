@@ -48,6 +48,17 @@ local function CreateEventBus()
 			return token
 		end
 
+		function self:Once(ev, fn, opts)
+			local holder = { token = nil }
+			holder.token = self:Subscribe(ev, function(event, ...)
+				-- unsubscribe first to ensure single execution
+				local t = holder.token
+				if t ~= nil then self:Unsubscribe(t); holder.token = false end
+				fn(event, ...)
+			end, opts)
+			return holder.token
+		end
+
 		local function maybeUnregister(event)
 			local list = handlers[event]
 			if list and #list == 0 and wowRegistered[event] then
@@ -60,8 +71,13 @@ local function CreateEventBus()
 			local meta = tokenIndex[token]; if not meta then return end
 			local ev = meta.event
 			if not meta.sentinel then
-				local list = handlers[ev]; if list then
-					for i=#list,1,-1 do if list[i].token == token then table.remove(list, i) end end
+				local list = handlers[ev]
+				if list ~= nil then
+					for i=#list,1,-1 do
+						if list[i].token == token then
+							table.remove(list, i)
+						end
+					end
 				end
 			end
 			tokenIndex[token] = nil

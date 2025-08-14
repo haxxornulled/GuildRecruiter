@@ -463,7 +463,9 @@ do
     end
     local function Spacer() println(" ") end
   local function ShowExtendedHelp()
-      println("|cffffff00Guild Recruiter - Slash Commands|r")
+  println("|cffffff00Guild Prospector - Slash Commands|r")
+  local t = (Addon and Addon.TITLE) or "Guild Prospector"
+  println("|cffffff00"..t.." - Slash Commands|r")
       println("|cffccccccPrimary:|r  /gr  /guildrecruiter  /guildrec")
       println("  /gr ui|toggle        - Open main UI window")
       println("  /gr settings|options - Open settings (or /groptions /grsettings)")
@@ -640,15 +642,13 @@ do
           local target = args[2]
           local max = tonumber(args[3] or "")
           if not target or not max then println("Usage: /gr prune prospects|blacklist <max>") return end
-          local recruiter = Addon.require and Addon.require("Recruiter")
-          if not recruiter then println("Recruiter service unavailable") return end
-          if target == "prospects" and recruiter.PruneProspects then
-            local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
-            local removed = pm and pm.PruneProspects and pm:PruneProspects(max) or 0
+          local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+          if not pm then println("ProspectManager unavailable") return end
+          if target == "prospects" and pm.PruneProspects then
+            local removed = pm:PruneProspects(max) or 0
             println("Pruned prospects removed="..removed)
-          elseif target == "blacklist" and recruiter.PruneBlacklist then
-            local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
-            local removed = pm and pm.PruneBlacklist and pm:PruneBlacklist(max) or 0
+          elseif target == "blacklist" and pm.PruneBlacklist then
+            local removed = pm:PruneBlacklist(max) or 0
             println("Pruned blacklist removed="..removed)
           else
             println("Invalid target (use prospects|blacklist)")
@@ -658,14 +658,13 @@ do
           local cfg = Addon.require and Addon.require("IConfiguration")
           if not (cfg and cfg.Get and cfg:Get("devMode", false)) then println("Dev mode required (/gr devmode on)") return end
           local who = args[3]; if not who then println("Usage: /gr test decline <Name>") return end
-          local recruiter = Addon.require and Addon.require("Recruiter")
-          if not recruiter then println("Recruiter service unavailable") return end
+          local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
+          if not pm then println("ProspectManager unavailable") return end
           local guidMatch
-          if recruiter.GetAllGuids and recruiter.GetProspect then
-            for _,pg in ipairs(recruiter:GetAllGuids() or {}) do local p = recruiter:GetProspect(pg); if p and p.name and p.name:lower()==who:lower() then guidMatch=pg break end end
+          if pm.GetAllGuids and pm.GetProspect then
+            for _,pg in ipairs(pm:GetAllGuids() or {}) do local p = pm:GetProspect(pg); if p and p.name and p.name:lower()==who:lower() then guidMatch=pg break end end
           end
           if guidMatch then
-            local pm = (Addon.Get and Addon.Get('IProspectManager')) or (Addon.require and Addon.require('ProspectsManager'))
             if pm and pm.Blacklist then pm:Blacklist(guidMatch, "decline-test") end
             local bus = Addon.require and Addon.require("EventBus")
             if bus and bus.Publish then bus:Publish("InviteService.InviteDeclined", guidMatch, who) end

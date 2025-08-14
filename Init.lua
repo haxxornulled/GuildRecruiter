@@ -5,6 +5,26 @@ local ADDON_NAME, AddonNamespace = __params[1], __params[2]
 local Addon = AddonNamespace or _G[ADDON_NAME] or {}
 _G[ADDON_NAME] = Addon
 
+-- Centralized product title (single source of truth)
+Addon.TITLE = "Guild Prospector" -- formerly "Guild Recruiter"
+
+-- Attempt to parse our own .toc file once to capture version (avoids manual duplication)
+if not Addon.VERSION then
+  local tocName = ADDON_NAME .. '.toc'
+  local pathCandidates = { tocName, 'Interface/AddOns/' .. ADDON_NAME .. '/' .. tocName }
+  local versionFound
+  for _, pth in ipairs(pathCandidates) do
+    local data = pcall and select(2, pcall(function() return C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON_NAME, 'Version') end))
+    if data and data ~= '' then versionFound = data; break end
+  end
+  -- Fallback: try global metadata retrieval API (retail / classic differences handled by nil checks)
+  if not versionFound and GetAddOnMetadata then
+    local v = GetAddOnMetadata(ADDON_NAME, 'Version')
+    if v and v ~= '' then versionFound = v end
+  end
+  Addon.VERSION = versionFound or '0.0.0'
+end
+
 local function logBoot(msg)
   local frame = rawget(_G, 'DEFAULT_CHAT_FRAME')
   if frame and frame.AddMessage then frame:AddMessage("|cff66ccff[GuildRecruiter][Boot]|r "..tostring(msg)) end
@@ -63,3 +83,24 @@ if shutdown and shutdown.RegisterEvent and shutdown.SetScript then
 end
 
 function Addon.DebugBoot() logBoot("Specs="..tostring(#(Addon._ServiceSpecs or {}))) end
+
+-- Lightweight settings opener (no dependency on removed root Config.lua registration)
+if not Addon.OpenSettings then
+  function Addon.OpenSettings()
+    -- Prefer Blizzard Settings category if previously registered elsewhere
+    local Settings = rawget(_G, 'Settings')
+    if Settings and Addon._OptionsCategoryID and type(Settings.OpenToCategory) == 'function' then
+      pcall(Settings.OpenToCategory, Addon._OptionsCategoryID)
+      return
+    end
+    -- Fallback: open our main UI and select the settings category tab
+    local ui = Addon.UI and Addon.UI.Main
+    if ui and ui.Show then
+      ui:Show()
+      if ui.SelectCategoryByKey then pcall(ui.SelectCategoryByKey, ui, 'settings') end
+    else
+      local frame = _G['GuildRecruiterFrame']
+      if frame and frame.Show then frame:Show() end
+    end
+  end
+end

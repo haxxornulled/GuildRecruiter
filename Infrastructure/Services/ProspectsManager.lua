@@ -66,6 +66,14 @@ function ProspectsManager:InviteProspect(guid)
     return false
 end
 
+-- Added passthrough Upsert so tests (and callers) that previously invoked ProspectsManager:Upsert continue to work
+-- without needing to reach for the lower-level ProspectsService directly. ProspectsService already emits the
+-- appropriate events; we intentionally do NOT duplicate publish() here to avoid double notification.
+function ProspectsManager:Upsert(p)
+    if not p or not p.guid then return end
+    if self._svc and self._svc.Upsert then self._svc:Upsert(p) end
+end
+
 -- Registration using ClassProvide (provides alias for IProspectManager automatically)
 local function RegisterProspectsManager()
     if not Addon or not Addon.ClassProvide then return end

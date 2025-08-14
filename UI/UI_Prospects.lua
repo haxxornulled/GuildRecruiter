@@ -3,6 +3,7 @@ local __args = {...}
 local AddonName, Addon = __args[1], (__args[2] or _G[__args[1]] or {})
 if type(AddonName) ~= 'string' or AddonName == '' then AddonName = 'GuildRecruiter' end
 local M = {}
+local Status = (Addon and Addon.ResolveOptional and Addon.ResolveOptional('ProspectStatus')) or { New='New', Invited='Invited', Blacklisted='Blacklisted' }
 
 -- Dependency shortcuts (resolved lazily for safety)
 local function getProvider()
@@ -68,9 +69,9 @@ local COLUMNS = {
       if not cell.text then return end
       local t = val or ''
       cell.text:SetText(t)
-      if t == 'Blacklisted' then cell.text:SetTextColor(1,0.35,0.35)
-      elseif t == 'New' then cell.text:SetTextColor(0.3,0.95,0.3)
-      elseif t == 'Invited' then cell.text:SetTextColor(0.3,0.7,1)
+    if t == Status.Blacklisted then cell.text:SetTextColor(1,0.35,0.35)
+    elseif t == Status.New then cell.text:SetTextColor(0.3,0.95,0.3)
+    elseif t == Status.Invited then cell.text:SetTextColor(0.3,0.7,1)
       else cell.text:SetTextColor(1,0.95,0.7) end
     end },
   { key='lastSeen', label='Last Seen', width=90, sortable=true, renderer=function(cell, _, rec)
@@ -108,6 +109,7 @@ local function buildFilterFn()
   local ps = tostring(p.status or '')
   local st = tostring(status or 'all')
   local okStatus = (st=='all') or (st=='active' and ps~='Blacklisted') or (st=='blacklisted' and ps=='Blacklisted') or (st=='new' and ps=='New')
+  local okStatus = (st=='all') or (st=='active' and ps~=Status.Blacklisted) or (st=='blacklisted' and ps==Status.Blacklisted) or (st=='new' and ps==Status.New)
   if not okStatus then return false end
     if hasSearch then
       local name=(p.name or ''):lower(); local cls=(p.className or p.classToken or ''):lower()
@@ -294,7 +296,7 @@ function M:Create(parent)
       make('I',0.3,1,0.3,function(r)
         local pm=getProspectManager(); if pm and pm.InviteProspect and r.guid then pm:InviteProspect(r.guid) end
       end,'Invite')
-      if rec.status=='Blacklisted' then
+  if rec.status==Status.Blacklisted then
         make('U',0.3,0.3,1,function(r) local pm=getProspectManager(); if pm and pm.Unblacklist and r.guid then pm:Unblacklist(r.guid) end end,'Unblacklist')
       else
         make('B',1,0.3,0.3,function(r) local pm=getProspectManager(); if pm and pm.Blacklist and r.guid then pm:Blacklist(r.guid,'manual') end end,'Blacklist')
@@ -337,7 +339,7 @@ function M:Create(parent)
       local c
       if token and C_ClassColor and C_ClassColor.GetClassColor then c = C_ClassColor.GetClassColor(token) end
       local baseR,baseG,baseB = 0.07,0.07,0.09
-      if rec and rec.status == 'Blacklisted' then
+  if rec and rec.status == Status.Blacklisted then
         baseR,baseG,baseB = 0.32,0.05,0.05
   elseif (c ~= nil) then
         -- subtle blend toward class
@@ -460,7 +462,8 @@ function M:Create(parent)
   local bus = getBus()
   if bus and bus.Subscribe and not frame._subscribed then
     frame._subscribed=true
-    bus:Subscribe('Prospects.Changed', function() frame:ScheduleRefresh() end, { namespace='UI.Prospects' })
+  local E = (Addon.ResolveOptional and Addon.ResolveOptional('Events')) or error('Events constants missing')
+  bus:Subscribe(E.Prospects.Changed, function() frame:ScheduleRefresh() end, { namespace='UI.Prospects' })
     -- Prefer namespaced events; generics still published but avoid duplicate subscriptions that spam refresh
     bus:Subscribe('GuildRecruiter.ServicesReady', function() frame:ScheduleRefresh() end, { namespace='UI.Prospects.Boot' })
     bus:Subscribe('GuildRecruiter.Ready', function() frame:ScheduleRefresh() end, { namespace='UI.Prospects.Boot' })

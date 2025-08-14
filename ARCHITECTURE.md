@@ -1,3 +1,6 @@
+# Guild Prospector Architecture
+
+> Note: The addon was previously titled "Guild Recruiter"; references in code or historical documents may still use the legacy name.
 # Clean Architecture Refactor (Phase 1)
 
 This addon is being migrated toward a Clean Architecture style segmentation:
@@ -46,6 +49,13 @@ See also: Docs/EmbeddedChatPanel.md for the embedded chat panel concept and arch
 - Consolidated interface stubs under `Core/Interfaces` (keys are provided for DI inspection); see `Docs/Interfaces.md`.
 - Fixed DI diagnostics by building the container post-registrations in bootstrap, so `/gr diag` shows accurate counts.
 - UI refinements: sidebar icons have no hover effects; the chat mini toggle uses a chat-bubble icon whose desaturation/alpha reflects collapsed state.
+- Unified prospect mutation events: all adds/updates/removals/blacklist/prune actions now publish a single canonical `Prospects.Changed` event (action, guid|count). Removed legacy granular events (`ProspectAdded`, etc.) to simplify the reactive surface and reduce subscriber churn.
+- Added structured constants module `Core/Events.lua` (DI key `Events`) eliminating magic event strings and enforcing compile-time discoverability in tests & UI.
+- Expanded diagnostics surface: `/gr diag` aggregates EventBus publishes/errors, Scheduler queue stats (tasks, peak, ran), DI scope counts (services, singletons), and prospect read model counts. `/gr di` now dumps container registrations and scope diagnostics.
+- Added `ProspectStatus` constants & predicates (IsNew/IsActive/IsBlacklisted/List) for consistent filtering & UI coloring.
+- Added `AutoPruneService` (config-driven background pruning) that emits a `Prospects.Changed` action `pruned` summarizing removals.
+- Hardened DI with circular dependency detection (emits full resolution path on error) and scope diagnostics (`scope:Diagnostics()`).
+- Headless test harness extended: deterministic Scheduler & EventBus, plus new specs for EventBus Once, Scheduler debounce/throttle/coalesce, AutoPrune pruning publish, status helpers, and DI cycle detection.
 
 ## OOP + DI (Constructor Injection)
 
@@ -130,6 +140,54 @@ Runtime guarantees (WoW):
 - WoW API globals (e.g., `time`, `CreateFrame`) exist at runtime; we declare them in `.luacheckrc` to keep linters quiet without changing runtime logic.
 
 Bottom line: Treat `addonTable` as the addon’s shared state/DI surface. It’s the most direct, efficient, and idiomatic way to coordinate modules in a WoW addon.
+
+## Unified Event Model
+
+The addon intentionally collapsed multiple fine-grained prospect mutation events into a single high-signal channel:
+
+`Prospects.Changed`  (action, arg)
+
+Actions currently emitted:
+- `added` (guid)
+- `updated` (guid)
+- `removed` (guid)
+- `blacklisted` (guid)
+- `unblacklisted` (guid)
+- `pruned` (countRemoved)
+
+Rationale:
+- Fewer subscriptions and frame script closures → lower GC churn.
+- Simplified test assertions (one event constant everywhere) and less brittle UI refresh logic.
+- Extensible: new actions can be appended without creating more global string keys or subscription fan-out.
+
+Consumers pattern match on the first arg (`action`) and branch accordingly. Where high-volume UI sections need optimized diffs, they can batch or throttle using the Scheduler's debounce/coalesce helpers.
+
+## Diagnostics Surface
+
+Diagnostics are first-class to aid iterative refactors:
+- EventBus: `bus:Diagnostics({ withHandlers=true })` reports publishes, errors, and handlers per event. `/gr diag` reads this.
+- Scheduler: `Scheduler:Diagnostics()` returns `{ tasks, peak, ran }` used for performance tuning of coalesced or throttled workloads.
+- DI Scope: every scope exposes `scope:Diagnostics()` with counts (services, decorators, singletons, scopedInstances, chainDepth). The root scope is inspected in slash diagnostics.
+- Prospects Read Model: service & data provider expose counts consumed by `/gr diag` for quick inventory sanity checks.
+
+Headless specs assert shape & sanity of these diagnostics to prevent silent regressions when optimizing internals.
+
+## Testing Infrastructure
+
+Location: `tools/tests/` executed via `run_all.lua` (auto-discovers `*spec.lua`). Key pieces:
+- `HeadlessHarness.lua`: lightweight Addon + deterministic Scheduler & EventBus; assertion helpers (`AssertEquals`, `AssertEventPublished`, etc.).
+- Domain & infra specs: prospects CRUD, blacklist, pruning, EventBus Once, Scheduler utilities, status predicate correctness, AutoPrune publish, DI cycle detection.
+- In-game specs (`ingame_*.lua`): executed only when inside WoW with `Addon.RegisterInGameTest` present; validate integration points (queue, invite, broadcast flows, in-game events).
+
+Guidelines for new specs:
+- Prefer resolving the `Events` constant table instead of hard-coded strings.
+- Use `Harness.ClearEvents()` before event-publish assertions to avoid cross-test noise.
+- Keep tests deterministic (no reliance on wall-clock; use `Harness.Advance(dt)` for scheduler time travel).
+
+Planned future additions:
+- Namespace unsubscribe & cancel coverage (EventBus:UnsubscribeNamespace, Scheduler:CancelNamespace) — partial tests pending.
+- Extended performance smoke tests measuring publish latency under synthetic load.
+
 
 
 ## Startup policy (no warm-up)

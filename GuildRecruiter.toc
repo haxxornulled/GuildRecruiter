@@ -1,9 +1,9 @@
 ## Interface: 110000
-## Title: GuildRecruiter
-## Notes: Guild recruiting assistant (prospects, blacklist, rotation messages)
+## Title: Guild Prospector
+## Notes: Guild recruiting assistant (prospects, blacklist, roster, outreach)
 ## Author: Distributed Cloud of Sentient Macros
 ## Version: 0.1.0
-## SavedVariables: GuildRecruiterDB
+## SavedVariables: GuildRecruiterDB, GuildRecruiterBenchDB, GuildRecruiterDiagnosticsGolden
 
 # Core-only smoke test load
 
@@ -11,8 +11,12 @@
 Core/Core.lua
 Core/OOP/Class.lua
 Core/OOP/Interface.lua
+Core/DI/Registration.lua
+Core/DI/Scope.lua
+Core/DI/Container.lua
 Core/Interfaces/IProspectsService.lua
 Core/Interfaces/IInviteService.lua
+Core/Interfaces/IBroadcastService.lua
 Core/Interfaces/IEventBus.lua
 Core/Interfaces/IScheduler.lua
 Core/Interfaces/IConfiguration.lua
@@ -21,6 +25,8 @@ Core/Interfaces/IProspectsReadModel.lua
 Core/Interfaces/IServiceProvider.lua
 Core/Interfaces/ISlashCommandHandler.lua
 Core/Interfaces/IPanelFactory.lua
+Core/Events.lua
+Core/ProspectStatus.lua
 
 # Logging (needed by debug commands)
 Infrastructure/Logging/Logger.lua
@@ -35,26 +41,32 @@ Infrastructure/Scheduling/Scheduler.lua
 # Environment/runtime capabilities (probe + slash cmd)
 Infrastructure/Environment/RuntimeCaps.lua
 
-# Service implementations
-Infrastructure/Services/SavedVarsService.lua
+# Service implementations (ordered: persistence -> domain -> queue -> invite -> broadcast)
 Infrastructure/Config/Config.lua
+Infrastructure/Services/SavedVarsService.lua
 Infrastructure/Services/ProspectsService.lua
 Infrastructure/Services/ProspectsManager.lua
+Infrastructure/Services/QueueService.lua
 Infrastructure/Services/InviteService.lua
-Infrastructure/Providers/ProspectsDataProvider.lua
-Infrastructure/Services/OptionsService.lua
+Infrastructure/Services/BroadcastService.lua
+Infrastructure/Services/CaptureService.lua
 Infrastructure/Services/InMemoryCache.lua
+Infrastructure/Services/OptionsService.lua
+Infrastructure/Providers/ProspectsDataProvider.lua
 Infrastructure/Persistence/DataPager.lua
 Infrastructure/Serialization/JSON.lua
-tools/Tokens.lua
-tools/UIHelpers.lua
-tools/ButtonLib.lua
 Infrastructure/Chat/ChatEventBridge.lua
 Infrastructure/Chat/ChatRouting.lua
 Infrastructure/UI/PanelFactory.lua
 
+# Tool libs (runtime helpers)
+tools/ButtonLib.lua
+tools/Tokens.lua
+tools/UIHelpers.lua
+
 # Domain + application
-GuildRecruiter.lua
+Localization.lua
+Application/SlashCommandsFactory.lua
 Application/Commands.lua
 Application/SlashCommandHandler.lua
 Application/Chat/ChatFeed.lua
@@ -81,6 +93,8 @@ UI/UI_ChatPanel.lua
 UI/UI_ChatOverlay.lua
 UI/UI_CategoryDecorators.lua
 UI/Components/DataGrid.lua
+UI/Components/VerticalTabs.lua
+UI/MainTabsHost.lua
 UI/UI_MainFrame.lua
 UI/UI_PanelRegistry.lua
 UI/UI_Debug.lua
@@ -90,4 +104,12 @@ UI/UI_Prospects.lua
 UI/UI_GuildRoster.lua
 UI/UI.Blacklist.lua
 UI/UI_Settings.lua
+
+# Dev Tests (optional; comment out for release)
+tools/InGameTestRunner.lua
+tools/TestContext.lua
+tools/tests/ingame_prospects_spec.lua
+tools/tests/ingame_prospects_extended_spec.lua
+tools/tests/ingame_queue_invite_spec.lua
+tools/tests/ingame_broadcast_spec.lua
 

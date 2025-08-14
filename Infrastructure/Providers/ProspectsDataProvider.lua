@@ -19,6 +19,8 @@ local ProspectsDataProvider = Class('ProspectsDataProvider', {
   __implements = { 'IProspectsReadModel' },
 })
 
+local Status = (Addon and Addon.ResolveOptional and Addon.ResolveOptional('ProspectStatus')) or { New='New', Invited='Invited', Blacklisted='Blacklisted', Rejected='Rejected' }
+
 local function _escapePattern(str)
   return (tostring(str or ''):gsub('([^%w])', '%%%1'))
 end
@@ -35,7 +37,8 @@ function ProspectsDataProvider:init(SavedVars, logger, EventBus, List)
   -- build initial indices and subscribe to changes
   self:_fullRebuild()
   if self._bus and self._bus.Subscribe then
-    self._bus:Subscribe('Prospects.Changed', function(ev, action, guid)
+  local E = (Addon.ResolveOptional and Addon.ResolveOptional('Events')) or error('Events constants missing')
+  self._bus:Subscribe(E.Prospects.Changed, function(ev, action, guid)
       self:_onChanged(action, guid)
     end, { namespace = 'ProspectsDataProvider' })
   end
@@ -69,7 +72,7 @@ local function _sanitize(self, p, guid)
     className = p.className or p.classToken or 'Unknown',
     raceName = p.raceName,
     raceToken = p.raceToken,
-    status = isBlacklisted and 'Blacklisted' or (p.status or 'New'),
+  status = isBlacklisted and Status.Blacklisted or (p.status or Status.New),
     firstSeen = p.firstSeen or 0,
     lastSeen = p.lastSeen or 0,
     seenCount = p.seenCount or 0,
@@ -152,8 +155,8 @@ function ProspectsDataProvider:GetStats()
   local total, active, blacklisted, new, byClass, totalLevels = 0,0,0,0,{},0
   for _,p in pairs(self._byGuid) do
     total = total + 1
-    if p.status == 'Blacklisted' then blacklisted = blacklisted + 1
-    elseif p.status == 'New' then new = new + 1; active = active + 1
+  if p.status == Status.Blacklisted then blacklisted = blacklisted + 1
+  elseif p.status == Status.New then new = new + 1; active = active + 1
     else active = active + 1 end
     local cls = p.className or p.classToken or 'Unknown'
     byClass[cls] = (byClass[cls] or 0) + 1
@@ -161,6 +164,12 @@ function ProspectsDataProvider:GetStats()
   end
   local avg = total > 0 and (math.floor((totalLevels/total)*10+0.5)/10) or 0
   return { total = total, active = active, blacklisted = blacklisted, new = new, byClass = byClass, avgLevel = avg }
+end
+
+-- Cheap snapshot for UI diffing (version + counts only)
+function ProspectsDataProvider:GetSnapshot()
+  local s = self:GetStats()
+  return { version = self._version, total = s.total, active = s.active, blacklisted = s.blacklisted, new = s.new }
 end
 
 function ProspectsDataProvider:GetAll()
@@ -213,7 +222,7 @@ function ProspectsDataProvider:GetFiltered(filters, sortColumn, sortDescending)
       local out = {}
       for _,p in ipairs(arr) do
         local ps = tostring(p.status or '')
-        local okStatus = (status=='all') or (status=='active' and ps~='Blacklisted') or (status=='blacklisted' and ps=='Blacklisted') or (status=='new' and ps=='New')
+  local okStatus = (status=='all') or (status=='active' and ps~=Status.Blacklisted) or (status=='blacklisted' and ps==Status.Blacklisted) or (status=='new' and ps==Status.New)
         if okStatus then
           if search == '' then out[#out+1]=p else
             local name=(p.name or ''):lower(); local cls=(p.className or p.classToken or ''):lower()
@@ -242,7 +251,7 @@ function ProspectsDataProvider:GetFiltered(filters, sortColumn, sortDescending)
     local hasSearch = search ~= ''
     predicate = function(p)
       local ps = tostring(p.status or '')
-      local okStatus = (status=='all') or (status=='active' and ps~='Blacklisted') or (status=='blacklisted' and ps=='Blacklisted') or (status=='new' and ps=='New')
+  local okStatus = (status=='all') or (status=='active' and ps~=Status.Blacklisted) or (status=='blacklisted' and ps==Status.Blacklisted) or (status=='new' and ps==Status.New)
       if not okStatus then return false end
       if hasSearch then
         local name=(p.name or ''):lower(); local cls=(p.className or p.classToken or ''):lower()

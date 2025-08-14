@@ -14,6 +14,10 @@
 -- Domain entity for a recruitable player prospect.
 -- Pure data + minimal invariants (no WoW API calls here). Other layers adapt.
 local Prospect = {}
+local __args = {...}
+local ADDON_NAME, AddonNS = __args[1], (__args[2] or _G[__args[1]] or {})
+local Addon = AddonNS
+local Status = (Addon and Addon.ResolveOptional and Addon.ResolveOptional('ProspectStatus')) or { New='New' }
 Prospect.__index = Prospect
 
 -- ctor(table fields) or Prospect.new(id, name,...)
@@ -34,7 +38,7 @@ function Prospect.new(fields)
     self.firstSeen = fields.firstSeen
     self.lastSeen = fields.lastSeen or fields.firstSeen
     self.seenCount = fields.seenCount or 1
-    self.status = fields.status or 'New'
+    self.status = fields.status or Status.New
     self.sources = fields.sources or {}
     return self
 end

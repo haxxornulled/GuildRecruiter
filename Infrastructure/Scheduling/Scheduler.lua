@@ -10,7 +10,7 @@ end
 
 local function CreateScheduler()
 	local self = {}
-	local tasks = {}
+	local tasks = {} -- kept sorted by due ascending
 	local canceled = {}
 	local nsIndex = {}
 	local deb, thr = {}, {}
@@ -22,22 +22,24 @@ local function CreateScheduler()
 		frame:SetScript("OnUpdate", function()
 			if #tasks == 0 then return end
 			local tnow = now()
-			table.sort(tasks, function(a,b) return a.due < b.due end)
-			local i = 1
-			while i <= #tasks do
-				local t = tasks[i]
-				if t.due > tnow then break end
-				table.remove(tasks, i)
-				if not canceled[t.id] then
-					pcall(t.fn, tnow, t.id)
-					if t.interval and not canceled[t.id] then
-						t.due = t.due + t.interval
-						table.insert(tasks, t)
+			while true do
+				local first = tasks[1]
+				if not first or first.due > tnow then break end
+				table.remove(tasks,1)
+				if not canceled[first.id] then
+					pcall(first.fn, tnow, first.id)
+					thr._ran = (thr._ran or 0) + 1
+					if first.interval and not canceled[first.id] then
+						first.due = first.due + first.interval
+						-- reinsert maintaining order
+						local inserted = false
+						for i=1,#tasks do if first.due < tasks[i].due then table.insert(tasks,i,first); inserted=true; break end end
+						if not inserted then tasks[#tasks+1] = first end
 					else
-						if t.ns and nsIndex[t.ns] then nsIndex[t.ns][t.id] = nil end
+						if first.ns and nsIndex[first.ns] then nsIndex[first.ns][first.id] = nil end
 					end
 				else
-					canceled[t.id] = nil
+					canceled[first.id] = nil
 				end
 			end
 		end)
@@ -50,8 +52,13 @@ local function CreateScheduler()
 
 	local function schedule(due, fn, interval, ns)
 		local id = newId()
-		tasks[#tasks+1] = { id = id, due = due, fn = fn, interval = interval, ns = ns }
+		local entry = { id = id, due = due, fn = fn, interval = interval, ns = ns }
+		-- binary insertion into tasks (tasks already sorted)
+		local inserted = false
+		for i=1,#tasks do if due < tasks[i].due then table.insert(tasks, i, entry); inserted=true; break end end
+		if not inserted then tasks[#tasks+1] = entry end
 		if ns then nsIndex[ns] = nsIndex[ns] or {}; nsIndex[ns][id] = true end
+		thr._peak = math.max(thr._peak or 0, #tasks)
 		return id
 	end
 
@@ -133,6 +140,10 @@ local function CreateScheduler()
 	function self:Stop()
 		tasks, canceled, nsIndex, deb, thr = {}, {}, {}, {}, {}
 		if frame and frame.SetScript then frame:SetScript('OnUpdate', function() end) end
+	end
+
+	function self:Diagnostics()
+		return { tasks = #tasks, ran = thr._ran or 0, peak = thr._peak or #tasks }
 	end
 
 	return self
